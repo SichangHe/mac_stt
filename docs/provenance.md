@@ -13,7 +13,12 @@ At upstream commit `19901d2e9cc757d562aa604f46a8f1749cb3902e`, GitHub reports no
 ## References
 
 - `https://github.com/zachswift615/speak2`, observed at commit `19901d2e9cc757d562aa604f46a8f1749cb3902e`
-- `https://github.com/FluidInference/FluidAudio`, referenced by `speak2` for Parakeet on Apple Silicon; authenticate its exact revision and license before dependency adoption
+- `https://github.com/FluidInference/FluidAudio`, dependency tag `v0.15.6`, commit `4dbf4f9f9a5ff3a53ade848d7ba4e3df13db859b`, authenticated 2026-09-01 as Apache-2.0 from its repository license and GitHub license metadata
+- `https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml`, downloaded at runtime through FluidAudio; its model card declares CC-BY-4.0 metadata and says it is derived from `nvidia/parakeet-tdt-0.6b-v3`
+- `https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3`, upstream model card and training artifact
+- `https://huggingface.co/FluidInference/parakeet-unified-en-0.6b-coreml`, live English model; its card declares CC-BY-4.0 and identifies `nvidia/parakeet-tdt-0.6b-v2` as the base model
+
+FluidAudio is linked as a Swift Package dependency; none of its source is vendored. The model-placement walker uses public Core ML APIs and was implemented locally. FluidAudio's profiler documentation was consulted to validate the claim boundary and measurement method.
 
 ## Hardware claim boundary
 

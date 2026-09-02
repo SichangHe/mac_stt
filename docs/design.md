@@ -1,0 +1,54 @@
+# design
+
+- interface
+  - `CLIParser` parses commands without loading frameworks or models
+  - `ResultWriter` prints, writes an optional file, then copies by default
+- file flow
+  - load one immutable Core ML model set
+  - launch one child task and one `AsrManager` per input
+  - preserve input order after concurrent completion
+  - optionally run one diarizer per input
+  - map each ASR word midpoint to the best overlapping speaker span
+  - label a word `unknown` when no speech span overlaps it
+- live flow
+  - `AVAudioEngine` callback makes an owned PCM copy and enqueues it
+  - the queue holds 64 buffers and stops with an overrun error instead of dropping audio
+  - an asynchronous consumer owns the streaming ASR manager
+  - English Parakeet Unified 640 ms emits changing partial text
+  - Control-C stops capture, drains queued audio, and flushes ASR
+  - optional diarization consumes 10-second 16 kHz chunks while capture continues
+  - a separate serial worker owns diarization and its bounded two-chunk queue
+  - speaker identity state persists across those chunks
+- isolation
+  - the real-time callback never calls Core ML
+  - each file job owns mutable decoder and diarizer state
+  - FluidAudio managers use actors where inference state is sequential
+  - no process-wide lock prevents another CLI process or file job
+- compute
+  - default policy is Core ML `.cpuAndNeuralEngine`
+  - other policies are explicit CLI choices
+  - policy means eligible devices, not observed execution
+  - `MLComputePlan` supplies preferred placement per operation
+  - `powermetrics` supplies separate runtime activity evidence
+- assumptions
+  - input formats are those supported by `AVAudioFile`
+  - models download on first use and remain in FluidAudio's cache
+  - live diarization labels the final transcript; it does not revise partial text
+  - speaker labels are anonymous session-local identifiers
+  - one output file represents one input; multi-input output is stdout and clipboard
+- failure
+  - non-arm64 execution stops before model loading
+  - parser rejects unknown options and missing values
+  - capture overload stops explicitly instead of silently losing audio
+  - one failed file cancels sibling jobs and prevents a partial clipboard write
+  - clipboard failure is reported after stdout/file output
+- tests
+  - parser defaults and opt-outs
+  - timestamp-to-speaker assembly
+  - words outside speech spans remain unknown
+  - bounded capture overflow and termination
+  - concurrent job start and stable result ordering
+  - cautious placement-report wording
+- verification
+  - `scripts/check` runs the Swift test suite and prints only failures
+  - `scripts/measure-ane` records runtime ANE power beside a real transcript

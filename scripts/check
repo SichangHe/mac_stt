@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+check_log=$(mktemp "${TMPDIR:-/tmp}/mac-stt-check.XXXXXX")
+trap 'rm -f "$check_log"' EXIT
+if ! swift test >"$check_log" 2>&1; then
+    sed -n '1,240p' "$check_log"
+    exit 1
+fi

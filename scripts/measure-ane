@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: scripts/measure-ane AUDIO POWER_LOG" >&2
+    echo "       scripts/measure-ane --record POWER_LOG" >&2
+    exit 2
+fi
+
+mode=$1
+power_log=$2
+mac_stt_bin=${MAC_STT_BIN:-mac-stt}
+meter_pid=
+
+stop_meter() {
+    if [ -n "$meter_pid" ] && kill -0 "$meter_pid" 2>/dev/null; then
+        sudo kill -TERM "$meter_pid" 2>/dev/null || true
+        wait "$meter_pid" 2>/dev/null || true
+    fi
+    meter_pid=
+}
+
+trap stop_meter EXIT HUP TERM
+sudo -v
+(trap '' INT; exec sudo powermetrics --samplers ane_power -i 200 >"$power_log" 2>&1) &
+meter_pid=$!
+if [ "$mode" = "--record" ]; then
+    "$mac_stt_bin" record --compute ane --no-clipboard
+else
+    "$mac_stt_bin" transcribe "$mode" --compute ane --no-clipboard
+fi
+stop_meter
+trap - EXIT HUP TERM
+echo "runtime power samples: $power_log" >&2
