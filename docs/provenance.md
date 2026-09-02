@@ -4,6 +4,8 @@
 
 The project was requested as a new `mac_stt` repository. The request named `zachswift615/speak2` as a possible fork or code reference and asked for Apple Neural Engine support, Parakeet, diarization, streaming capture, nonblocking finalization, clipboard output, and a fine-tuning resource assessment.
 
+The hosted acceptance workflow downloads `ES2004a.Mix-Headset.wav` from FluidAudio's AMI corpus mirror, verifies SHA-256 `3e2560b19bee6952c7c7ce041b0f1ea8a7ea9468044c4eea79d2a2c67e24ab0f`, and derives a 90-second excerpt covering seconds 300 through 390. The AMI Consortium releases the AMI Meeting Corpus under [CC BY 4.0](https://groups.inf.ed.ac.uk/ami/corpus/license.shtml); the requested citation is Carletta, J. (2006), “Announcing the AMI Meeting Corpus,” ELRA Newsletter 11(1), 3–5. Neither the source audio nor the excerpt is uploaded as a workflow artifact.
+
 ## Bootstrap decision
 
 Create an original repository rather than fork or copy `speak2`.

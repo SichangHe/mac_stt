@@ -12,7 +12,7 @@ case "$(uname -s):$(uname -m)" in
     Darwin:arm64) ;;
     *) echo "CI acceptance requires macOS arm64" >&2; exit 1 ;;
 esac
-for tool in say swift pbcopy pbpaste afinfo shasum; do
+for tool in say swift pbcopy pbpaste afinfo shasum curl; do
     command -v "$tool" >/dev/null 2>&1 || { echo "missing command: $tool" >&2; exit 1; }
 done
 
@@ -32,6 +32,10 @@ trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 mkdir -p "$evidence/checks" "$evidence/models" "$evidence/power" "$evidence/runs"
 audio="$tmp_dir/synthetic.aiff"
+diarization_source="$tmp_dir/ES2004a.Mix-Headset.wav"
+diarization_audio="$tmp_dir/ES2004a-300-390.wav"
+diarization_url=https://huggingface.co/datasets/FluidInference/ami-corpus-mirror/resolve/main/sdm/ES2004a.Mix-Headset.wav
+diarization_sha256=3e2560b19bee6952c7c7ce041b0f1ea8a7ea9468044c4eea79d2a2c67e24ab0f
 bin=.build/release/mac-stt
 models_root="$HOME/Library/Application Support/FluidAudio/Models"
 
@@ -48,6 +52,36 @@ require_two_speakers() {
 
 say -r 145 -o "$audio" \
     "[[voice Alex]] This is speaker one testing private transcription on Apple silicon. The quick brown fox jumps over the lazy dog. Accurate timestamps and changing partial results matter. We repeat this passage so two independent model processes remain active together. [[slnc 1000]] [[voice Samantha]] This is speaker two with a different voice. She sells seashells by the seashore. Speaker labels, final text, and safe concurrency matter. We repeat this passage so the streaming model receives enough audio for multiple partial results. [[slnc 1000]] [[voice Alex]] Speaker one returns for another clear passage about local speech recognition. [[slnc 1000]] [[voice Samantha]] Speaker two finishes the deterministic synthetic recording."
+curl --fail --location --silent --show-error --retry 3 \
+    "$diarization_url" -o "$diarization_source"
+printf '%s  %s\n' "$diarization_sha256" "$diarization_source" | shasum -a 256 -c -
+swift - "$diarization_source" "$diarization_audio" <<'SWIFT'
+import AVFoundation
+import Foundation
+
+let arguments = CommandLine.arguments
+guard arguments.count == 3 else { fatalError("expected input and output paths") }
+let input = try AVAudioFile(forReading: URL(fileURLWithPath: arguments[1]))
+let sampleRate = input.processingFormat.sampleRate
+input.framePosition = AVAudioFramePosition(300 * sampleRate)
+let output = try AVAudioFile(
+    forWriting: URL(fileURLWithPath: arguments[2]),
+    settings: input.fileFormat.settings
+)
+var remaining = AVAudioFrameCount(90 * sampleRate)
+while remaining > 0 {
+    let frameCount = min(remaining, 65_536)
+    guard let buffer = AVAudioPCMBuffer(
+        pcmFormat: input.processingFormat,
+        frameCapacity: frameCount
+    ) else { fatalError("could not allocate excerpt buffer") }
+    try input.read(into: buffer, frameCount: frameCount)
+    guard buffer.frameLength > 0 else { break }
+    try output.write(from: buffer)
+    remaining -= buffer.frameLength
+}
+guard remaining == 0 else { fatalError("source ended before the requested excerpt") }
+SWIFT
 {
     date -u '+started_utc=%Y-%m-%dT%H:%M:%SZ'
     uname -a
@@ -57,7 +91,19 @@ say -r 145 -o "$audio" \
     swift --version
 } >"$evidence/system.txt" 2>&1
 afinfo "$audio" >"$evidence/input-audio.txt" 2>&1
-shasum -a 256 "$audio" >"$evidence/input-audio.sha256"
+afinfo "$diarization_audio" >"$evidence/diarization-input.txt" 2>&1
+shasum -a 256 "$audio" "$diarization_audio" >"$evidence/input-audio.sha256"
+{
+    echo "title=AMI Meeting Corpus, ES2004a Mix-Headset"
+    echo "creator=AMI Consortium"
+    echo "source=$diarization_url"
+    echo "source_sha256=$diarization_sha256"
+    echo "adaptation=seconds 300 through 390 extracted to a new WAV file"
+    echo "license=Creative Commons Attribution 4.0 International (CC BY 4.0)"
+    echo "license_url=https://groups.inf.ed.ac.uk/ami/corpus/license.shtml"
+    echo "citation=Carletta, J. (2006), Announcing the AMI Meeting Corpus, ELRA Newsletter 11(1), 3-5"
+    echo "retention=source audio and excerpt are not uploaded; derived transcripts and hashes are retained"
+} >"$evidence/input-provenance.txt"
 shasum -a 256 scripts/ci-acceptance scripts/measure-ane >"$evidence/runners.sha256"
 
 swift build -c release >"$evidence/build.txt" 2>&1
@@ -66,12 +112,12 @@ shasum -a 256 "$bin" >"$evidence/mac-stt.sha256"
 
 printf 'mac-stt-ci-clipboard-sentinel' | pbcopy
 printf 'mac-stt-ci-clipboard-sentinel' >"$evidence/checks/clipboard-sentinel.expected"
-"$bin" transcribe "$audio" --diarize --compute ane --no-clipboard \
+"$bin" transcribe "$diarization_audio" --diarize --compute ane --no-clipboard \
     >"$evidence/runs/tdt-v3-diarized.txt" 2>"$evidence/runs/tdt-v3-diarized.stderr"
 grep -E '^\[[0-9]{2}:[0-9]{2}\.[0-9]{2}' "$evidence/runs/tdt-v3-diarized.txt" \
     >"$evidence/checks/tdt-v3-diarization.txt"
 require_two_speakers "$evidence/runs/tdt-v3-diarized.txt" tdt-v3
-"$bin" record --input "$audio" --diarize --compute ane --no-clipboard \
+"$bin" record --input "$diarization_audio" --diarize --compute ane --no-clipboard \
     >"$evidence/runs/unified-diarized.txt" 2>"$evidence/runs/unified-diarized.stderr"
 grep -E '^\[[0-9]{2}:[0-9]{2}\.[0-9]{2}' "$evidence/runs/unified-diarized.txt" \
     >"$evidence/checks/unified-diarization.txt"
@@ -184,7 +230,7 @@ done
 ) | sort >"$evidence/models/runtime-models.sha256"
 {
     echo "MACOS ARM64 AUTOMATED FEATURE EVIDENCE"
-    echo "Real: Core ML model loading, synthetic-audio inference, two emitted diarizer identities, Unified partials, process overlap, and clipboard probes."
+    echo "Real: Core ML model loading, public multi-speaker and synthetic-audio inference, two emitted diarizer identities, Unified partials, process overlap, and clipboard probes."
     echo "Not real: microphone capture. The hosted runner exposes no documented physical microphone."
     echo "ANE: status files say whether powermetrics exposed samples; samples still require paired human interpretation."
     date -u '+finished_utc=%Y-%m-%dT%H:%M:%SZ'
