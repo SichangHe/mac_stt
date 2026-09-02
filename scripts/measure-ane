@@ -1,16 +1,51 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 2 ]; then
-    echo "usage: scripts/measure-ane AUDIO POWER_LOG" >&2
-    echo "       scripts/measure-ane --record POWER_LOG" >&2
+compute=ane
+diarize=false
+clipboard=false
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --compute)
+            [ "$#" -ge 2 ] || break
+            compute=$2
+            shift 2
+            ;;
+        --diarize)
+            diarize=true
+            shift
+            ;;
+        --clipboard)
+            clipboard=true
+            shift
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+case "$compute" in ane|cpu) ;; *) compute=invalid ;; esac
+record_input=
+if [ "$#" -eq 3 ] && [ "$1" = "--input" ]; then
+    mode=--record
+    record_input=$2
+    power_log=$3
+elif [ "$#" -eq 2 ]; then
+    mode=$1
+    power_log=$2
+else
+    mode=invalid
+fi
+if [ "$mode" = invalid ] || [ "$compute" = invalid ]; then
+    echo "usage: scripts/measure-ane [--compute ane|cpu] [--diarize] [--clipboard] AUDIO POWER_LOG" >&2
+    echo "       scripts/measure-ane [--compute ane|cpu] [--diarize] [--clipboard] --record POWER_LOG" >&2
+    echo "       scripts/measure-ane [--compute ane|cpu] [--diarize] [--clipboard] --input AUDIO POWER_LOG" >&2
     exit 2
 fi
 
-mode=$1
-power_log=$2
 mac_stt_bin=${MAC_STT_BIN:-mac-stt}
 meter_pid=
+app_pid=
 
 stop_meter() {
     if [ -n "$meter_pid" ] && kill -0 "$meter_pid" 2>/dev/null; then
@@ -20,15 +55,52 @@ stop_meter() {
     meter_pid=
 }
 
-trap stop_meter EXIT HUP TERM
+stop_all() {
+    if [ -n "$app_pid" ] && kill -0 "$app_pid" 2>/dev/null; then
+        kill -TERM "$app_pid" 2>/dev/null || true
+        wait "$app_pid" 2>/dev/null || true
+    fi
+    app_pid=
+    stop_meter
+}
+
+trap stop_all EXIT
+trap 'exit 130' HUP INT TERM
 sudo -v
 (trap '' INT; exec sudo powermetrics --samplers ane_power -i 200 >"$power_log" 2>&1) &
 meter_pid=$!
+set -- "$mac_stt_bin"
 if [ "$mode" = "--record" ]; then
-    "$mac_stt_bin" record --compute ane --no-clipboard
+    set -- "$@" record --compute "$compute"
+    if [ -n "$record_input" ]; then set -- "$@" --input "$record_input"; fi
 else
-    "$mac_stt_bin" transcribe "$mode" --compute ane --no-clipboard
+    set -- "$@" transcribe "$mode" --compute "$compute"
+fi
+if [ "$diarize" = true ]; then set -- "$@" --diarize; fi
+if [ "$clipboard" = false ]; then set -- "$@" --no-clipboard; fi
+if [ "$mode" = "--record" ] && [ -z "$record_input" ]; then
+    "$@" &
+    app_pid=$!
+    if [ -n "${MAC_STT_RECORD_STOP_FILE:-}" ]; then
+        echo "Speak into the microphone until the acceptance runner stops mac-stt." >&2
+        while [ ! -e "$MAC_STT_RECORD_STOP_FILE" ]; do
+            kill -0 "$app_pid" 2>/dev/null || break
+            sleep 0.1
+        done
+    else
+        echo "Speak into the microphone, then press Enter to stop mac-stt." >&2
+        if ! read -r ignored </dev/tty; then
+            kill -TERM "$app_pid" 2>/dev/null || true
+            wait "$app_pid" 2>/dev/null || true
+            exit 1
+        fi
+    fi
+    kill -INT "$app_pid" 2>/dev/null || true
+    wait "$app_pid"
+    app_pid=
+else
+    "$@"
 fi
 stop_meter
-trap - EXIT HUP TERM
+trap - EXIT HUP INT TERM
 echo "runtime power samples: $power_log" >&2

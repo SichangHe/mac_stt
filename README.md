@@ -25,6 +25,9 @@ The first inference downloads model assets from Hugging Face. Later runs use Flu
 # English live partial text on stderr; final result to stdout and clipboard
 mac-stt record
 
+# exercise the Unified streaming pipeline from a finite file
+mac-stt record --input speech.wav --diarize --no-clipboard
+
 # add speaker labels to the final result
 mac-stt record --diarize
 
@@ -51,3 +54,9 @@ The default `--compute ane` means `.cpuAndNeuralEngine`: CPU and ANE are eligibl
 - stdout always receives the final result; the clipboard does too unless `--no-clipboard` is present
 
 The compact code map is [docs/design.md](docs/design.md). Fine-tuning costs and the recommended experiment are in [docs/fine-tuning.md](docs/fine-tuning.md). Third-party provenance is recorded in [docs/provenance.md](docs/provenance.md).
+
+## acceptance
+
+On an Apple Silicon Mac, `scripts/acceptance TWO_SPEAKER_AUDIO BUNDLE_DIR` runs and retains the real feature and ANE-versus-CPU evidence needed for acceptance. The bundle remains a candidate until a human checks the raw power samples and changing live partials. See [hardware evidence](docs/hardware-evidence.md).
+
+The `macOS feature evidence` GitHub workflow runs real TDT v3, Unified, diarization, partial, clipboard, placement, and overlap probes on a hosted arm64 Mac. A green run means only those automatable features passed. Its synthetic file input is not microphone evidence. `powermetrics` results are retained as observed samples or explicitly warned and marked unsupported; configuration and placement never count as observed ANE execution.

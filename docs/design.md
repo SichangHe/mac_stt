@@ -19,6 +19,7 @@
   - optional diarization consumes 10-second 16 kHz chunks while capture continues
   - a separate serial worker owns diarization and its bounded two-chunk queue
   - speaker identity state persists across those chunks
+  - `record --input FILE` paces a finite file through the same Unified pipeline for automation
 - isolation
   - the real-time callback never calls Core ML
   - each file job owns mutable decoder and diarizer state
@@ -51,4 +52,8 @@
   - cautious placement-report wording
 - verification
   - `scripts/check` runs the Swift test suite and prints only failures
-  - `scripts/measure-ane` records runtime ANE power beside a real transcript
+  - `scripts/measure-ane` records runtime ANE power beside an ANE or CPU run
+  - live measurement stops only `mac-stt`, so Control-C cannot truncate the wrapper
+  - `scripts/acceptance` retains the complete real-run acceptance candidate
+  - `scripts/ci-acceptance` retains real model evidence on a hosted Apple Silicon runner
+  - hosted evidence uses synthetic file input and never claims microphone coverage

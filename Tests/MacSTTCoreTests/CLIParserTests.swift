@@ -27,4 +27,22 @@ final class CLIParserTests: XCTestCase {
             XCTAssertEqual(error as? CLIError, .unknownOption("--magic"))
         }
     }
+
+    func testRecordAcceptsFiniteStreamingInput() throws {
+        let command = try CLIParser.parse([
+            "record", "--input", "two-speaker.wav", "--diarize", "--no-clipboard",
+            "--compute", "cpu",
+        ])
+        guard case .record(let options) = command else { return XCTFail("wrong command") }
+        XCTAssertEqual(options.inputPath, "two-speaker.wav")
+        XCTAssertTrue(options.diarize)
+        XCTAssertFalse(options.output.copyToClipboard)
+        XCTAssertEqual(options.compute, .cpu)
+    }
+
+    func testRecordInputNeedsAPath() {
+        XCTAssertThrowsError(try CLIParser.parse(["record", "--input"])) { error in
+            XCTAssertEqual(error as? CLIError, .missingValue("--input"))
+        }
+    }
 }

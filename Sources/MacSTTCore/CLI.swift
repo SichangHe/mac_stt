@@ -35,6 +35,7 @@ public struct TranscribeOptions: Equatable, Sendable {
 }
 
 public struct RecordOptions: Equatable, Sendable {
+    public let inputPath: String?
     public let diarize: Bool
     public let compute: ComputePolicy
     public let output: OutputOptions
@@ -78,7 +79,7 @@ public enum CLIParser {
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .doctor
         case "transcribe":
-            let parsed = try parseShared(rest, allowsDiarization: true)
+            let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
             guard !parsed.paths.isEmpty else { throw CLIError.missingInput(name) }
             return .transcribe(
                 TranscribeOptions(
@@ -88,16 +89,17 @@ public enum CLIParser {
                     output: parsed.output
                 ))
         case "record":
-            let parsed = try parseShared(rest, allowsDiarization: true)
+            let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: true)
             guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
             return .record(
                 RecordOptions(
+                    inputPath: parsed.inputPath,
                     diarize: parsed.diarize,
                     compute: parsed.compute,
                     output: parsed.output
                 ))
         case "profile-model":
-            let parsed = try parseShared(rest, allowsDiarization: false)
+            let parsed = try parseShared(rest, allowsDiarization: false, allowsInput: false)
             guard !parsed.paths.isEmpty else { throw CLIError.missingInput(name) }
             guard parsed.output == OutputOptions() else {
                 throw CLIError.unknownOption("output option")
@@ -109,9 +111,14 @@ public enum CLIParser {
 
     private static func parseShared(
         _ arguments: [String],
-        allowsDiarization: Bool
-    ) throws -> (paths: [String], diarize: Bool, compute: ComputePolicy, output: OutputOptions) {
+        allowsDiarization: Bool,
+        allowsInput: Bool
+    ) throws -> (
+        paths: [String], inputPath: String?, diarize: Bool,
+        compute: ComputePolicy, output: OutputOptions
+    ) {
         var paths: [String] = []
+        var inputPath: String?
         var diarize = false
         var compute = ComputePolicy.ane
         var output = OutputOptions()
@@ -121,6 +128,10 @@ public enum CLIParser {
             switch argument {
             case "--diarize" where allowsDiarization:
                 diarize = true
+            case "--input" where allowsInput:
+                index += 1
+                guard index < arguments.count else { throw CLIError.missingValue(argument) }
+                inputPath = arguments[index]
             case "--no-clipboard":
                 output.copyToClipboard = false
             case "--output", "-o":
@@ -141,7 +152,7 @@ public enum CLIParser {
             }
             index += 1
         }
-        return (paths, diarize, compute, output)
+        return (paths, inputPath, diarize, compute, output)
     }
 }
 
@@ -149,12 +160,13 @@ public let usage = """
 mac-stt — local Parakeet speech-to-text for Apple Silicon
 
 usage:
-  mac-stt record [--diarize] [--compute ane|gpu|cpu|all] [--no-clipboard] [-o PATH]
+  mac-stt record [--input FILE] [--diarize] [--compute ane|gpu|cpu|all] [--no-clipboard] [-o PATH]
   mac-stt transcribe FILE... [--diarize] [--compute ane|gpu|cpu|all] [--no-clipboard] [-o PATH]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
   mac-stt doctor
 
 record prints changing partial text while the microphone is live; press Control-C to finish.
+With --input, record feeds a finite audio file through the same Unified streaming pipeline.
 The default `ane` policy permits CPU and Neural Engine but cannot by itself prove ANE execution.
 Use `profile-model` for the Core ML placement plan and `powermetrics` for runtime confirmation.
 """

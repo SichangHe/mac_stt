@@ -2,6 +2,9 @@
 set -eu
 check_log=$(mktemp "${TMPDIR:-/tmp}/mac-stt-check.XXXXXX")
 trap 'rm -f "$check_log"' EXIT
+for script in scripts/check scripts/measure-ane scripts/acceptance scripts/ci-acceptance; do
+    sh -n "$script"
+done
 if ! swift test >"$check_log" 2>&1; then
     tail -n 300 "$check_log"
     exit 1

@@ -14,26 +14,35 @@
   - activity above the idle baseline, aligned with inference, is runtime evidence
   - retain the Mac model, macOS version, model files, command, and raw samples
 
-## acceptance run
+## complete acceptance run
 
 ```sh
-mac-stt doctor
-mac-stt profile-model /actual/TDT-v3/Encoder.mlmodelc --compute ane
-scripts/measure-ane acceptance.wav tdt-v3-ane-power.txt > acceptance.txt
+scripts/acceptance multiminute-two-speaker.wav acceptance-$(date -u +%Y%m%dT%H%M%SZ)
 ```
 
-Use the actual compiled bundle path from FluidAudio's model cache. This file command measures multilingual TDT v3.
+Run this in a normal Terminal on an Apple Silicon Mac. The input must contain enough clear speech from two speakers that both file jobs remain active while the microphone starts; use several minutes on a fast Mac. After an automatic model warm-up, the script asks for three 30-second live passages: comparable clean ANE and CPU passages, then a two-speaker overlap passage. Grant microphone access if macOS asks.
 
-The live model is separate. After one `record` run downloads it, profile the bundle named `parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc`, then measure the same model during capture:
+The retained directory contains host, input, command, runner, binary, and runtime-model identity; compiled model placement; real diarized file and microphone results; default and opt-out clipboard checks; two file jobs overlapping the microphone run; and clean raw ANE-versus-CPU power samples for TDT v3 and Unified. It is deliberately labeled a candidate: inspect the raw power comparison and changing live partials before declaring acceptance. The overlap trace is never used for ANE attribution because concurrent workloads would confound it.
+
+## focused measurement
+
+Measure multilingual TDT v3 with the same warmed model and audio:
 
 ```sh
-mac-stt profile-model /actual/parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc --compute ane
-scripts/measure-ane --record unified-ane-power.txt > live-acceptance.txt
+scripts/measure-ane --compute ane acceptance.wav tdt-ane-power.txt > tdt-ane.txt
+scripts/measure-ane --compute cpu acceptance.wav tdt-cpu-power.txt > tdt-cpu.txt
 ```
 
-Speak for at least 20 seconds, then press Control-C.
+Measure Unified during two comparable microphone passages:
 
-Compare against `--compute cpu` using the same warmed model and audio. Record wall time and ANE samples for both. ANE activity in the first run and an idle baseline in the CPU-only run is stronger evidence than timing alone.
+```sh
+scripts/measure-ane --compute ane --record unified-ane-power.txt > unified-ane.txt
+scripts/measure-ane --compute cpu --record unified-cpu-power.txt > unified-cpu.txt
+```
+
+Speak, then press Enter to stop each live run.
+
+Compare ANE against CPU using the same warmed model and audio or comparable live passages. ANE activity in the first run and an idle baseline in the CPU-only run is stronger evidence than timing alone.
 
 ## boundaries
 

@@ -51,7 +51,7 @@ public enum LiveRecorder {
     // 🧑 “transcribe while recording so we don’t wait for forever when the speech is over”
     public static func record(options: RecordOptions) async throws -> TranscriptDocument {
         try Hardware.requireAppleSilicon()
-        try await requireMicrophonePermission()
+        if options.inputPath == nil { try await requireMicrophonePermission() }
         let interrupt = InterruptWaiter()
         let configuration = MLModelConfiguration()
         configuration.computeUnits = options.compute.mlComputeUnits
@@ -73,9 +73,18 @@ public enum LiveRecorder {
         await manager.setPartialTranscriptCallback { text in
             FileHandle.standardError.write(Data("\r\u{001B}[2K\(text)".utf8))
         }
-        let capture = MicrophoneCapture()
-        let stream = try capture.start()
-        FileHandle.standardError.write(Data("recording; press Control-C to finish\n".utf8))
+        let capture: MicrophoneCapture?
+        let stream: AsyncThrowingStream<AVAudioPCMBuffer, Error>
+        if let inputPath = options.inputPath {
+            capture = nil
+            stream = try AudioFileBufferReader.stream(path: inputPath)
+            FileHandle.standardError.write(Data("streaming input: \(inputPath)\n".utf8))
+        } else {
+            let microphone = MicrophoneCapture()
+            capture = microphone
+            stream = try microphone.start()
+            FileHandle.standardError.write(Data("recording; press Control-C to finish\n".utf8))
+        }
         let consumer = Task { () throws -> Void in
             do {
                 let converter = AudioConverter()
@@ -92,13 +101,14 @@ public enum LiveRecorder {
                 if let diarizationWorker, let tail = chunker.finish() {
                     try diarizationWorker.send(tail)
                 }
+                if options.inputPath != nil { interrupt.trigger() }
             } catch {
                 interrupt.trigger()
                 throw error
             }
         }
         await interrupt.wait()
-        capture.stop()
+        capture?.stop()
         try await consumer.value
         let spans = try await diarizationWorker?.finish() ?? []
         let text = try await manager.finish()
@@ -126,6 +136,8 @@ public enum LiveRecorder {
 }
 
 public enum RecorderError: Error, LocalizedError {
+    case fileMissing(String)
+    case invalidAudioFile
     case microphonePermissionDenied
     case captureOverrun
     case diarizationOverrun
@@ -133,6 +145,10 @@ public enum RecorderError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
+        case .fileMissing(let path):
+            "input file does not exist: \(path)"
+        case .invalidAudioFile:
+            "could not allocate an audio-file input buffer"
         case .microphonePermissionDenied:
             "microphone access is required; enable it in System Settings > Privacy & Security > Microphone"
         case .captureOverrun:
@@ -147,12 +163,14 @@ public enum RecorderError: Error, LocalizedError {
 
 private final class InterruptWaiter: @unchecked Sendable {
     private let events: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
     private let source: DispatchSourceSignal
 
     init() {
         signal(SIGINT, SIG_IGN)
         let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         events = pair.stream
+        continuation = pair.continuation
         let source = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
         source.setEventHandler {
             pair.continuation.yield(())
@@ -168,7 +186,41 @@ private final class InterruptWaiter: @unchecked Sendable {
     }
 
     func trigger() {
-        raise(SIGINT)
+        continuation.yield(())
+        continuation.finish()
+        source.cancel()
+    }
+}
+
+private final class AudioFileBufferReader: @unchecked Sendable {
+    private static let bufferFrames: AVAudioFrameCount = 4096
+    private let file: AVAudioFile
+
+    private init(path: String) throws {
+        let expanded = (path as NSString).expandingTildeInPath
+        guard FileManager.default.fileExists(atPath: expanded) else {
+            throw RecorderError.fileMissing(path)
+        }
+        file = try AVAudioFile(forReading: URL(fileURLWithPath: expanded))
+    }
+
+    static func stream(path: String) throws -> AsyncThrowingStream<AVAudioPCMBuffer, Error> {
+        let reader = try AudioFileBufferReader(path: path)
+        return AsyncThrowingStream(unfolding: { try await reader.next() })
+    }
+
+    private func next() async throws -> AVAudioPCMBuffer? {
+        guard file.framePosition < file.length else { return nil }
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: file.processingFormat,
+            frameCapacity: Self.bufferFrames
+        ) else {
+            throw RecorderError.invalidAudioFile
+        }
+        try file.read(into: buffer)
+        let seconds = Double(buffer.frameLength) / file.processingFormat.sampleRate
+        try await Task.sleep(for: .seconds(seconds))
+        return buffer.frameLength == 0 ? nil : buffer
     }
 }
 
