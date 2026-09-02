@@ -36,6 +36,20 @@ public struct PlacementReport: Equatable, Sendable {
     public let cpuOperations: Int
     public let otherOperations: Int
 
+    public init(
+        model: String,
+        neuralEngineOperations: Int,
+        gpuOperations: Int,
+        cpuOperations: Int,
+        otherOperations: Int
+    ) {
+        self.model = model
+        self.neuralEngineOperations = neuralEngineOperations
+        self.gpuOperations = gpuOperations
+        self.cpuOperations = cpuOperations
+        self.otherOperations = otherOperations
+    }
+
     public var totalOperations: Int {
         neuralEngineOperations + gpuOperations + cpuOperations + otherOperations
     }
