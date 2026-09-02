@@ -25,6 +25,9 @@ done
 mkdir -p "$bundle/host" "$bundle/models" "$bundle/runs" "$bundle/checks"
 bin=.build/release/mac-stt
 models_root="$HOME/Library/Application Support/FluidAudio/Models"
+tdt_model_dir=parakeet-tdt-0.6b-v3
+unified_model_dir=parakeet-unified-en-0.6b
+diarizer_model_dir=speaker-diarization
 file_pid_1=
 file_pid_2=
 record_pid=
@@ -133,7 +136,7 @@ cmp "$bundle/runs/tdt-diarized.txt" "$bundle/runs/tdt-diarized.clipboard"
 printf 'clipboard equals the file result\n' >"$bundle/checks/tdt-clipboard.txt"
 require_two_speakers "$bundle/runs/tdt-diarized.txt" tdt
 
-tdt_encoder=$(find "$models_root/parakeet-tdt-0.6b-v3-coreml" \
+tdt_encoder=$(find "$models_root/$tdt_model_dir" \
     -type d -name 'Encoder.mlmodelc' -print -quit)
 [ -n "$tdt_encoder" ] || { echo "TDT v3 encoder bundle not found" >&2; exit 1; }
 "$bin" profile-model "$tdt_encoder" --compute ane >"$bundle/models/tdt-v3-placement.txt" 2>&1
@@ -158,7 +161,7 @@ date -u '+models_ready_utc=%Y-%m-%dT%H:%M:%SZ' >"$unified_warm_stop"
 wait "$record_pid"
 record_pid=
 
-unified_encoder=$(find "$models_root/parakeet-unified-en-0.6b-coreml" \
+unified_encoder=$(find "$models_root/$unified_model_dir" \
     -type d -name 'parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc' -print -quit)
 [ -n "$unified_encoder" ] || { echo "Unified encoder bundle not found" >&2; exit 1; }
 "$bin" profile-model "$unified_encoder" --compute ane >"$bundle/models/unified-placement.txt" 2>&1
@@ -242,14 +245,13 @@ require_power_samples "$bundle/runs/tdt-v3-ane-power.txt" tdt-v3-ane
 require_power_samples "$bundle/runs/tdt-v3-cpu-power.txt" tdt-v3-cpu
 require_power_samples "$bundle/runs/unified-ane-power.txt" unified-ane
 require_power_samples "$bundle/runs/unified-cpu-power.txt" unified-cpu
-for model_dir in parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
-    speaker-diarization-coreml; do
+for model_dir in "$tdt_model_dir" "$unified_model_dir" "$diarizer_model_dir"; do
     [ -d "$models_root/$model_dir" ] || { echo "runtime model directory missing: $model_dir" >&2; exit 1; }
 done
 (
     cd "$models_root"
-    find parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
-        speaker-diarization-coreml -type f -exec shasum -a 256 {} \;
+    find "$tdt_model_dir" "$unified_model_dir" "$diarizer_model_dir" \
+        -type f -exec shasum -a 256 {} \;
 ) | sort >"$bundle/models/runtime-models.sha256"
 {
     echo "CANDIDATE APPLE SILICON ACCEPTANCE EVIDENCE"

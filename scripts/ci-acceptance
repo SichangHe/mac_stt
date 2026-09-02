@@ -38,6 +38,9 @@ diarization_url=https://huggingface.co/datasets/FluidInference/ami-corpus-mirror
 diarization_sha256=3e2560b19bee6952c7c7ce041b0f1ea8a7ea9468044c4eea79d2a2c67e24ab0f
 bin=.build/release/mac-stt
 models_root="$HOME/Library/Application Support/FluidAudio/Models"
+tdt_model_dir=parakeet-tdt-0.6b-v3
+unified_model_dir=parakeet-unified-en-0.6b
+diarizer_model_dir=speaker-diarization
 
 require_two_speakers() {
     transcript=$1
@@ -161,9 +164,9 @@ else
     fi
 fi
 
-tdt_encoder=$(find "$models_root/parakeet-tdt-0.6b-v3-coreml" \
+tdt_encoder=$(find "$models_root/$tdt_model_dir" \
     -type d -name 'Encoder.mlmodelc' -print -quit)
-unified_encoder=$(find "$models_root/parakeet-unified-en-0.6b-coreml" \
+unified_encoder=$(find "$models_root/$unified_model_dir" \
     -type d -name 'parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc' -print -quit)
 [ -n "$tdt_encoder" ] && [ -n "$unified_encoder" ]
 "$bin" profile-model "$tdt_encoder" "$unified_encoder" --compute ane \
@@ -225,14 +228,13 @@ probe_power tdt-v3-cpu --compute cpu "$audio"
 probe_power unified-ane --compute ane --input "$audio"
 probe_power unified-cpu --compute cpu --input "$audio"
 
-for model_dir in parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
-    speaker-diarization-coreml; do
+for model_dir in "$tdt_model_dir" "$unified_model_dir" "$diarizer_model_dir"; do
     [ -d "$models_root/$model_dir" ] || { echo "missing model directory: $model_dir" >&2; exit 1; }
 done
 (
     cd "$models_root"
-    find parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
-        speaker-diarization-coreml -type f -exec shasum -a 256 {} \;
+    find "$tdt_model_dir" "$unified_model_dir" "$diarizer_model_dir" \
+        -type f -exec shasum -a 256 {} \;
 ) | sort >"$evidence/models/runtime-models.sha256"
 {
     echo "MACOS ARM64 AUTOMATED FEATURE EVIDENCE"
