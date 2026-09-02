@@ -61,27 +61,33 @@ import Foundation
 
 let arguments = CommandLine.arguments
 guard arguments.count == 3 else { fatalError("expected input and output paths") }
-let input = try AVAudioFile(forReading: URL(fileURLWithPath: arguments[1]))
-let sampleRate = input.processingFormat.sampleRate
-input.framePosition = AVAudioFramePosition(300 * sampleRate)
-let output = try AVAudioFile(
-    forWriting: URL(fileURLWithPath: arguments[2]),
-    settings: input.fileFormat.settings
-)
-var remaining = AVAudioFrameCount(90 * sampleRate)
-while remaining > 0 {
-    let frameCount = min(remaining, 65_536)
-    guard let buffer = AVAudioPCMBuffer(
-        pcmFormat: input.processingFormat,
-        frameCapacity: frameCount
-    ) else { fatalError("could not allocate excerpt buffer") }
-    try input.read(into: buffer, frameCount: frameCount)
-    guard buffer.frameLength > 0 else { break }
-    try output.write(from: buffer)
-    remaining -= buffer.frameLength
+try autoreleasepool {
+    let input = try AVAudioFile(forReading: URL(fileURLWithPath: arguments[1]))
+    let sampleRate = input.processingFormat.sampleRate
+    input.framePosition = AVAudioFramePosition(300 * sampleRate)
+    let output = try AVAudioFile(
+        forWriting: URL(fileURLWithPath: arguments[2]),
+        settings: input.fileFormat.settings
+    )
+    var remaining = AVAudioFrameCount(90 * sampleRate)
+    while remaining > 0 {
+        let frameCount = min(remaining, 65_536)
+        guard let buffer = AVAudioPCMBuffer(
+            pcmFormat: input.processingFormat,
+            frameCapacity: frameCount
+        ) else { fatalError("could not allocate excerpt buffer") }
+        try input.read(into: buffer, frameCount: frameCount)
+        guard buffer.frameLength > 0 else { break }
+        try output.write(from: buffer)
+        remaining -= buffer.frameLength
+    }
+    guard remaining == 0 else { fatalError("source ended before the requested excerpt") }
 }
-guard remaining == 0 else { fatalError("source ended before the requested excerpt") }
 SWIFT
+[ "$(wc -c <"$diarization_audio" | tr -d ' ')" -ge 2800000 ] || {
+    echo "derived AMI excerpt is unexpectedly short" >&2
+    exit 1
+}
 {
     date -u '+started_utc=%Y-%m-%dT%H:%M:%SZ'
     uname -a
