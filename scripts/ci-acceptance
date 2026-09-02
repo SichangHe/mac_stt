@@ -1,0 +1,191 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 1 ]; then
+    echo "usage: scripts/ci-acceptance EVIDENCE_DIR" >&2
+    exit 2
+fi
+
+evidence=$1
+[ ! -e "$evidence" ] || { echo "evidence directory already exists: $evidence" >&2; exit 1; }
+case "$(uname -s):$(uname -m)" in
+    Darwin:arm64) ;;
+    *) echo "CI acceptance requires macOS arm64" >&2; exit 1 ;;
+esac
+for tool in say swift pbcopy pbpaste afinfo shasum; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "missing command: $tool" >&2; exit 1; }
+done
+
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/mac-stt-ci.XXXXXX")
+tdt_pid=
+unified_pid=
+cleanup() {
+    for pid in "$tdt_pid" "$unified_pid"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        fi
+    done
+    rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+mkdir -p "$evidence/checks" "$evidence/models" "$evidence/power" "$evidence/runs"
+audio="$tmp_dir/synthetic.aiff"
+bin=.build/release/mac-stt
+models_root="$HOME/Library/Application Support/FluidAudio/Models"
+
+require_two_speakers() {
+    transcript=$1
+    label=$2
+    sed -n 's/^\[[^]]*\] \([^:]*\):.*/\1/p' "$transcript" | \
+        sed '/^unknown$/d' | sort -u >"$evidence/checks/$label-speakers.txt"
+    [ "$(wc -l <"$evidence/checks/$label-speakers.txt" | tr -d ' ')" -ge 2 ] || {
+        echo "$label emitted fewer than two non-unknown speaker identities" >&2
+        exit 1
+    }
+}
+
+say -r 145 -o "$audio" \
+    "[[voice Alex]] This is speaker one testing private transcription on Apple silicon. The quick brown fox jumps over the lazy dog. Accurate timestamps and changing partial results matter. We repeat this passage so two independent model processes remain active together. [[slnc 1000]] [[voice Samantha]] This is speaker two with a different voice. She sells seashells by the seashore. Speaker labels, final text, and safe concurrency matter. We repeat this passage so the streaming model receives enough audio for multiple partial results. [[slnc 1000]] [[voice Alex]] Speaker one returns for another clear passage about local speech recognition. [[slnc 1000]] [[voice Samantha]] Speaker two finishes the deterministic synthetic recording."
+{
+    date -u '+started_utc=%Y-%m-%dT%H:%M:%SZ'
+    uname -a
+    sw_vers
+    sysctl -n hw.model
+    sysctl -n machdep.cpu.brand_string
+    swift --version
+} >"$evidence/system.txt" 2>&1
+afinfo "$audio" >"$evidence/input-audio.txt" 2>&1
+shasum -a 256 "$audio" >"$evidence/input-audio.sha256"
+shasum -a 256 scripts/ci-acceptance scripts/measure-ane >"$evidence/runners.sha256"
+
+swift build -c release >"$evidence/build.txt" 2>&1
+"$bin" doctor >"$evidence/doctor.txt" 2>&1
+shasum -a 256 "$bin" >"$evidence/mac-stt.sha256"
+
+printf 'mac-stt-ci-clipboard-sentinel' | pbcopy
+printf 'mac-stt-ci-clipboard-sentinel' >"$evidence/checks/clipboard-sentinel.expected"
+"$bin" transcribe "$audio" --diarize --compute ane --no-clipboard \
+    >"$evidence/runs/tdt-v3-diarized.txt" 2>"$evidence/runs/tdt-v3-diarized.stderr"
+grep -E '^\[[0-9]{2}:[0-9]{2}\.[0-9]{2}' "$evidence/runs/tdt-v3-diarized.txt" \
+    >"$evidence/checks/tdt-v3-diarization.txt"
+require_two_speakers "$evidence/runs/tdt-v3-diarized.txt" tdt-v3
+"$bin" record --input "$audio" --diarize --compute ane --no-clipboard \
+    >"$evidence/runs/unified-diarized.txt" 2>"$evidence/runs/unified-diarized.stderr"
+grep -E '^\[[0-9]{2}:[0-9]{2}\.[0-9]{2}' "$evidence/runs/unified-diarized.txt" \
+    >"$evidence/checks/unified-diarization.txt"
+require_two_speakers "$evidence/runs/unified-diarized.txt" unified
+pbpaste >"$evidence/checks/clipboard-sentinel.observed"
+cmp "$evidence/checks/clipboard-sentinel.expected" "$evidence/checks/clipboard-sentinel.observed"
+printf 'PASS\n' >"$evidence/checks/clipboard-opt-out.txt"
+"$bin" transcribe "$audio" --compute cpu --no-clipboard \
+    >"$evidence/runs/tdt-v3-cpu.txt" 2>"$evidence/runs/tdt-v3-cpu.stderr"
+"$bin" record --input "$audio" --compute cpu --no-clipboard \
+    >"$evidence/runs/unified-cpu.txt" 2>"$evidence/runs/unified-cpu.stderr"
+
+escape=$(printf '\033')
+tr '\r' '\n' <"$evidence/runs/unified-diarized.stderr" | \
+    sed -n "s/^.*${escape}\\[2K//p" | grep -v '^$' | sort -u \
+    >"$evidence/checks/unified-partials.txt"
+[ "$(wc -l <"$evidence/checks/unified-partials.txt" | tr -d ' ')" -ge 2 ] || {
+    echo "Unified emitted fewer than two distinct partial transcripts" >&2
+    exit 1
+}
+
+if "$bin" transcribe "$audio" --compute ane >"$tmp_dir/clipboard.stdout" \
+    2>"$evidence/runs/clipboard-default.stderr"; then
+    pbpaste >"$tmp_dir/clipboard.observed"
+    printf '\n' >>"$tmp_dir/clipboard.observed"
+    cmp "$tmp_dir/clipboard.stdout" "$tmp_dir/clipboard.observed"
+    printf 'PASS\n' >"$evidence/checks/clipboard-default.txt"
+else
+    if grep -q '^error: could not write the macOS clipboard' \
+        "$evidence/runs/clipboard-default.stderr"; then
+        printf 'UNSUPPORTED on this hosted runner\n' >"$evidence/checks/clipboard-default.txt"
+    else
+        echo "default-clipboard model run failed" >&2
+        exit 1
+    fi
+fi
+
+tdt_encoder=$(find "$models_root/parakeet-tdt-0.6b-v3-coreml" \
+    -type d -name 'Encoder.mlmodelc' -print -quit)
+unified_encoder=$(find "$models_root/parakeet-unified-en-0.6b-coreml" \
+    -type d -name 'parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc' -print -quit)
+[ -n "$tdt_encoder" ] && [ -n "$unified_encoder" ]
+"$bin" profile-model "$tdt_encoder" "$unified_encoder" --compute ane \
+    >"$evidence/models/placement.txt" 2>&1
+
+"$bin" transcribe "$audio" --compute ane --no-clipboard \
+    >"$evidence/runs/overlap-tdt-v3.txt" 2>"$evidence/runs/overlap-tdt-v3.stderr" &
+tdt_pid=$!
+"$bin" record --input "$audio" --compute ane --no-clipboard \
+    >"$evidence/runs/overlap-unified.txt" 2>"$evidence/runs/overlap-unified.stderr" &
+unified_pid=$!
+sleep 0.1
+tdt_state=$(ps -o state= -p "$tdt_pid" | tr -d ' ' | cut -c 1)
+unified_state=$(ps -o state= -p "$unified_pid" | tr -d ' ' | cut -c 1)
+case "$tdt_state:$unified_state" in
+    *Z*|:*|*:) echo "model processes did not overlap" >&2; exit 1 ;;
+esac
+printf 'tdt_v3_state=%s\nunified_state=%s\n' "$tdt_state" "$unified_state" \
+    >"$evidence/checks/process-overlap.txt"
+wait "$tdt_pid"
+tdt_pid=
+wait "$unified_pid"
+unified_pid=
+
+probe_power() {
+    probe_label=$1
+    shift
+    probe_exit=0
+    MAC_STT_BIN=$bin scripts/measure-ane "$@" \
+        "$evidence/power/$probe_label.raw.txt" \
+        >"$evidence/power/$probe_label.transcript.txt" \
+        2>"$evidence/power/$probe_label.stderr.txt" || probe_exit=$?
+    if grep -q '^error:' "$evidence/power/$probe_label.stderr.txt"; then
+        echo "$probe_label model run failed" >&2
+        return 1
+    fi
+    if [ "$probe_exit" -eq 0 ] && \
+        grep -E -i 'ANE.*(Power|mW)' "$evidence/power/$probe_label.raw.txt" \
+        >"$evidence/power/$probe_label.samples.txt" && \
+        [ "$(wc -l <"$evidence/power/$probe_label.samples.txt" | tr -d ' ')" -ge 3 ]; then
+        printf 'OBSERVED SAMPLES; HUMAN COMPARISON REQUIRED\n' \
+            >"$evidence/power/$probe_label.status.txt"
+    elif [ "$probe_exit" -eq 0 ] || \
+        grep -E -i -q '(powermetrics|sampler|not supported|operation not permitted|sudo:)' \
+        "$evidence/power/$probe_label.raw.txt" "$evidence/power/$probe_label.stderr.txt"; then
+        printf 'UNSUPPORTED on this hosted runner\n' \
+            >"$evidence/power/$probe_label.status.txt"
+        if [ "${GITHUB_ACTIONS:-}" = true ]; then
+            echo "::warning::$probe_label ANE power sampling is unsupported; hard acceleration acceptance remains open"
+        fi
+    else
+        echo "$probe_label power probe failed unexpectedly" >&2
+        return 1
+    fi
+}
+
+probe_power tdt-v3-ane --compute ane "$audio"
+probe_power tdt-v3-cpu --compute cpu "$audio"
+probe_power unified-ane --compute ane --input "$audio"
+probe_power unified-cpu --compute cpu --input "$audio"
+
+for model_dir in parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
+    speaker-diarization-coreml; do
+    [ -d "$models_root/$model_dir" ] || { echo "missing model directory: $model_dir" >&2; exit 1; }
+done
+(
+    cd "$models_root"
+    find parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
+        speaker-diarization-coreml -type f -exec shasum -a 256 {} \;
+) | sort >"$evidence/models/runtime-models.sha256"
+{
+    echo "MACOS ARM64 AUTOMATED FEATURE EVIDENCE"
+    echo "Real: Core ML model loading, synthetic-audio inference, two emitted diarizer identities, Unified partials, process overlap, and clipboard probes."
+    echo "Not real: microphone capture. The hosted runner exposes no documented physical microphone."
+    echo "ANE: status files say whether powermetrics exposed samples; samples still require paired human interpretation."
+    date -u '+finished_utc=%Y-%m-%dT%H:%M:%SZ'
+} >"$evidence/README.txt"

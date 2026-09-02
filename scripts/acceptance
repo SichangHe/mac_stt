@@ -1,0 +1,263 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: scripts/acceptance MULTIMINUTE_TWO_SPEAKER_AUDIO BUNDLE_DIR" >&2
+    echo "The audio must keep two file jobs active until microphone capture starts." >&2
+    exit 2
+fi
+
+audio=$1
+bundle=$2
+case "$(uname -s):$(uname -m)" in
+    Darwin:arm64) ;;
+    *) echo "acceptance requires an Apple Silicon Mac" >&2; exit 1 ;;
+esac
+for tool in swift powermetrics pbcopy pbpaste afinfo shasum ps; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "missing required command: $tool" >&2
+        exit 1
+    }
+done
+[ -f "$audio" ] || { echo "audio file not found: $audio" >&2; exit 1; }
+[ ! -e "$bundle" ] || { echo "bundle already exists: $bundle" >&2; exit 1; }
+
+mkdir -p "$bundle/host" "$bundle/models" "$bundle/runs" "$bundle/checks"
+bin=.build/release/mac-stt
+models_root="$HOME/Library/Application Support/FluidAudio/Models"
+file_pid_1=
+file_pid_2=
+record_pid=
+
+stop_children() {
+    for pid in "$record_pid" "$file_pid_1" "$file_pid_2"; do
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+    for pid in "$record_pid" "$file_pid_1" "$file_pid_2"; do
+        if [ -n "$pid" ]; then wait "$pid" 2>/dev/null || true; fi
+    done
+}
+
+wait_for_capture() {
+    capture_pid=$1
+    capture_stderr=$2
+    capture_name=$3
+    capture_waits=0
+    until grep -q 'recording; press Control-C to finish' "$capture_stderr"; do
+        capture_state=$(ps -o state= -p "$capture_pid" | tr -d ' ' | cut -c 1)
+        case "$capture_state" in
+            ''|Z)
+                wait "$capture_pid" || true
+                echo "$capture_name stopped before microphone capture began" >&2
+                exit 1
+                ;;
+        esac
+        capture_waits=$((capture_waits + 1))
+        [ "$capture_waits" -lt 6000 ] || {
+            echo "timed out waiting for $capture_name microphone capture" >&2
+            exit 1
+        }
+        sleep 0.1
+    done
+}
+
+stop_after_30_seconds() {
+    stop_file=$1
+    sleep 30
+    date -u '+stopped_after_30_seconds_utc=%Y-%m-%dT%H:%M:%SZ' >"$stop_file"
+}
+
+require_two_speakers() {
+    transcript=$1
+    label=$2
+    grep -E '^\[[0-9]{2}:[0-9]{2}\.[0-9]{2}' "$transcript" \
+        >"$bundle/checks/$label-diarization-lines.txt" || true
+    sed -n 's/^\[[^]]*\] \([^:]*\):.*/\1/p' "$transcript" | \
+        sed '/^unknown$/d' | sort -u >"$bundle/checks/$label-speakers.txt"
+    [ "$(wc -l <"$bundle/checks/$label-speakers.txt" | tr -d ' ')" -ge 2 ] || {
+        echo "$label diarization did not emit at least two non-unknown speaker labels" >&2
+        exit 1
+    }
+}
+
+require_power_samples() {
+    power_log=$1
+    label=$2
+    grep -E -i 'ANE.*(Power|mW)' "$power_log" >"$bundle/checks/$label-ane-samples.txt" || {
+        echo "$label contains no recognizable ANE power samples" >&2
+        exit 1
+    }
+    [ "$(wc -l <"$bundle/checks/$label-ane-samples.txt" | tr -d ' ')" -ge 3 ] || {
+        echo "$label contains fewer than three ANE power samples" >&2
+        exit 1
+    }
+}
+
+trap stop_children EXIT
+trap 'exit 130' HUP INT TERM
+
+{
+    date -u '+started_utc=%Y-%m-%dT%H:%M:%SZ'
+    uname -a
+    sw_vers
+    sysctl -n hw.model
+    sysctl -n machdep.cpu.brand_string
+    swift --version
+} >"$bundle/host/system.txt" 2>&1
+afinfo "$audio" >"$bundle/host/input-audio.txt" 2>&1
+shasum -a 256 "$audio" >"$bundle/host/input-audio.sha256"
+shasum -a 256 scripts/acceptance scripts/measure-ane >"$bundle/host/runners.sha256"
+
+swift build -c release >"$bundle/host/build.txt" 2>&1
+"$bin" doctor >"$bundle/host/doctor.txt" 2>&1
+shasum -a 256 "$bin" >"$bundle/host/mac-stt.sha256"
+{
+    printf 'tdt_diarized=%s transcribe %s --diarize --compute ane -o RESULT\n' "$bin" "$audio"
+    printf 'tdt_ane=MAC_STT_BIN=%s scripts/measure-ane --compute ane %s POWER_LOG\n' "$bin" "$audio"
+    printf 'tdt_cpu=MAC_STT_BIN=%s scripts/measure-ane --compute cpu %s POWER_LOG\n' "$bin" "$audio"
+    printf 'unified_ane=MAC_STT_BIN=%s scripts/measure-ane --compute ane --record POWER_LOG\n' "$bin"
+    printf 'unified_cpu=MAC_STT_BIN=%s scripts/measure-ane --compute cpu --record POWER_LOG\n' "$bin"
+    printf 'overlap_file_1=%s transcribe %s --diarize --compute ane --no-clipboard\n' "$bin" "$audio"
+    printf 'overlap_file_2=%s transcribe %s --diarize --compute ane --no-clipboard\n' "$bin" "$audio"
+    printf 'overlap_live=MAC_STT_BIN=%s scripts/measure-ane --compute ane --diarize --clipboard --record POWER_LOG\n' "$bin"
+} >"$bundle/host/commands.txt"
+
+"$bin" transcribe "$audio" --diarize --compute ane \
+    -o "$bundle/runs/tdt-diarized.txt" \
+    >"$bundle/runs/tdt-diarized.stdout" 2>"$bundle/runs/tdt-diarized.stderr"
+pbpaste >"$bundle/runs/tdt-diarized.clipboard"
+printf '\n' >>"$bundle/runs/tdt-diarized.clipboard"
+cmp "$bundle/runs/tdt-diarized.txt" "$bundle/runs/tdt-diarized.clipboard"
+printf 'clipboard equals the file result\n' >"$bundle/checks/tdt-clipboard.txt"
+require_two_speakers "$bundle/runs/tdt-diarized.txt" tdt
+
+tdt_encoder=$(find "$models_root/parakeet-tdt-0.6b-v3-coreml" \
+    -type d -name 'Encoder.mlmodelc' -print -quit)
+[ -n "$tdt_encoder" ] || { echo "TDT v3 encoder bundle not found" >&2; exit 1; }
+"$bin" profile-model "$tdt_encoder" --compute ane >"$bundle/models/tdt-v3-placement.txt" 2>&1
+
+printf 'mac-stt clipboard opt-out sentinel' | pbcopy
+printf 'mac-stt clipboard opt-out sentinel' >"$bundle/checks/clipboard-sentinel.expected"
+MAC_STT_BIN=$bin scripts/measure-ane --compute ane "$audio" \
+    "$bundle/runs/tdt-v3-ane-power.txt" \
+    >"$bundle/runs/tdt-v3-ane.txt" 2>"$bundle/runs/tdt-v3-ane.stderr"
+MAC_STT_BIN=$bin scripts/measure-ane --compute cpu "$audio" \
+    "$bundle/runs/tdt-v3-cpu-power.txt" \
+    >"$bundle/runs/tdt-v3-cpu.txt" 2>"$bundle/runs/tdt-v3-cpu.stderr"
+
+unified_warm_stop="$bundle/checks/unified-warm-stop.txt"
+MAC_STT_RECORD_STOP_FILE=$unified_warm_stop MAC_STT_BIN=$bin \
+    scripts/measure-ane --compute ane --diarize --record \
+    "$bundle/runs/unified-warm-power.txt" \
+    >"$bundle/runs/unified-warm.txt" 2>"$bundle/runs/unified-warm.stderr" &
+record_pid=$!
+wait_for_capture "$record_pid" "$bundle/runs/unified-warm.stderr" "Unified warm-up"
+date -u '+models_ready_utc=%Y-%m-%dT%H:%M:%SZ' >"$unified_warm_stop"
+wait "$record_pid"
+record_pid=
+
+unified_encoder=$(find "$models_root/parakeet-unified-en-0.6b-coreml" \
+    -type d -name 'parakeet_unified_encoder_streaming_70_7_1_int8.mlmodelc' -print -quit)
+[ -n "$unified_encoder" ] || { echo "Unified encoder bundle not found" >&2; exit 1; }
+"$bin" profile-model "$unified_encoder" --compute ane >"$bundle/models/unified-placement.txt" 2>&1
+
+echo "Speak continuously for the 30-second clean Unified ANE run." >&2
+unified_ane_stop="$bundle/checks/unified-ane-stop.txt"
+MAC_STT_RECORD_STOP_FILE=$unified_ane_stop MAC_STT_BIN=$bin \
+    scripts/measure-ane --compute ane --record "$bundle/runs/unified-ane-power.txt" \
+    >"$bundle/runs/unified-ane.txt" 2>"$bundle/runs/unified-ane.stderr" &
+record_pid=$!
+wait_for_capture "$record_pid" "$bundle/runs/unified-ane.stderr" "Unified ANE"
+stop_after_30_seconds "$unified_ane_stop"
+wait "$record_pid"
+record_pid=
+
+echo "Speak comparably for the 30-second clean Unified CPU run." >&2
+unified_cpu_stop="$bundle/checks/unified-cpu-stop.txt"
+MAC_STT_RECORD_STOP_FILE=$unified_cpu_stop MAC_STT_BIN=$bin \
+    scripts/measure-ane --compute cpu --record "$bundle/runs/unified-cpu-power.txt" \
+    >"$bundle/runs/unified-cpu.txt" 2>"$bundle/runs/unified-cpu.stderr" &
+record_pid=$!
+wait_for_capture "$record_pid" "$bundle/runs/unified-cpu.stderr" "Unified CPU"
+stop_after_30_seconds "$unified_cpu_stop"
+wait "$record_pid"
+record_pid=
+pbpaste >"$bundle/checks/clipboard-sentinel.observed"
+cmp "$bundle/checks/clipboard-sentinel.expected" "$bundle/checks/clipboard-sentinel.observed"
+printf 'clipboard opt-out preserved the sentinel across file and live runs\n' \
+    >"$bundle/checks/clipboard-opt-out.txt"
+
+date -u '+file_jobs_started_utc=%Y-%m-%dT%H:%M:%SZ' >"$bundle/runs/overlap-timeline.txt"
+"$bin" transcribe "$audio" --diarize --compute ane --no-clipboard \
+    >"$bundle/runs/overlap-file-1.txt" 2>"$bundle/runs/overlap-file-1.stderr" &
+file_pid_1=$!
+"$bin" transcribe "$audio" --diarize --compute ane --no-clipboard \
+    >"$bundle/runs/overlap-file-2.txt" 2>"$bundle/runs/overlap-file-2.stderr" &
+file_pid_2=$!
+date -u '+record_started_utc=%Y-%m-%dT%H:%M:%SZ' >>"$bundle/runs/overlap-timeline.txt"
+echo "Have both speakers talk during the 30-second Unified overlap run." >&2
+overlap_stop="$bundle/checks/overlap-stop.txt"
+MAC_STT_RECORD_STOP_FILE=$overlap_stop MAC_STT_BIN=$bin \
+    scripts/measure-ane --compute ane --diarize --clipboard --record \
+    "$bundle/runs/overlap-power.txt" \
+    >"$bundle/runs/overlap-live-diarized.txt" 2>"$bundle/runs/overlap-live-diarized.stderr" &
+record_pid=$!
+wait_for_capture "$record_pid" "$bundle/runs/overlap-live-diarized.stderr" "Unified overlap"
+date -u '+microphone_capture_observed_utc=%Y-%m-%dT%H:%M:%SZ' \
+    >>"$bundle/runs/overlap-timeline.txt"
+file_state_1=$(ps -o state= -p "$file_pid_1" | tr -d ' ' | cut -c 1)
+file_state_2=$(ps -o state= -p "$file_pid_2" | tr -d ' ' | cut -c 1)
+case "$file_state_1:$file_state_2" in
+    *Z*|:*|*:) echo "a file transcription was not running when microphone capture began" >&2; exit 1 ;;
+esac
+printf 'file_1_state=%s\nfile_2_state=%s\n' "$file_state_1" "$file_state_2" \
+    >"$bundle/checks/real-overlap.txt"
+stop_after_30_seconds "$overlap_stop"
+wait "$record_pid"
+record_pid=
+date -u '+record_finished_utc=%Y-%m-%dT%H:%M:%SZ' >>"$bundle/runs/overlap-timeline.txt"
+wait "$file_pid_1"
+file_pid_1=
+date -u '+file_1_finished_utc=%Y-%m-%dT%H:%M:%SZ' >>"$bundle/runs/overlap-timeline.txt"
+wait "$file_pid_2"
+file_pid_2=
+date -u '+file_2_finished_utc=%Y-%m-%dT%H:%M:%SZ' >>"$bundle/runs/overlap-timeline.txt"
+pbpaste >"$bundle/runs/overlap-live.clipboard"
+printf '\n' >>"$bundle/runs/overlap-live.clipboard"
+cmp "$bundle/runs/overlap-live-diarized.txt" "$bundle/runs/overlap-live.clipboard"
+printf 'clipboard equals the live result\n' >"$bundle/checks/unified-clipboard.txt"
+require_two_speakers "$bundle/runs/overlap-live-diarized.txt" unified
+escape=$(printf '\033')
+tr '\r' '\n' <"$bundle/runs/overlap-live-diarized.stderr" | \
+    sed -n "s/^.*${escape}\\[2K//p" | grep -v '^$' | sort -u \
+    >"$bundle/checks/unified-partials.txt"
+[ "$(wc -l <"$bundle/checks/unified-partials.txt" | tr -d ' ')" -ge 2 ] || {
+    echo "Unified did not retain at least two distinct partial transcript updates" >&2
+    exit 1
+}
+
+require_power_samples "$bundle/runs/tdt-v3-ane-power.txt" tdt-v3-ane
+require_power_samples "$bundle/runs/tdt-v3-cpu-power.txt" tdt-v3-cpu
+require_power_samples "$bundle/runs/unified-ane-power.txt" unified-ane
+require_power_samples "$bundle/runs/unified-cpu-power.txt" unified-cpu
+for model_dir in parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
+    speaker-diarization-coreml; do
+    [ -d "$models_root/$model_dir" ] || { echo "runtime model directory missing: $model_dir" >&2; exit 1; }
+done
+(
+    cd "$models_root"
+    find parakeet-tdt-0.6b-v3-coreml parakeet-unified-en-0.6b-coreml \
+        speaker-diarization-coreml -type f -exec shasum -a 256 {} \;
+) | sort >"$bundle/models/runtime-models.sha256"
+{
+    echo "CANDIDATE APPLE SILICON ACCEPTANCE EVIDENCE"
+    echo "Review the clean, option-identical Unified and TDT ANE-versus-CPU power logs."
+    echo "Do not claim observed ANE execution unless the raw comparison supports it."
+    echo "The overlap power log is feature evidence only; it is intentionally excluded from ANE attribution."
+    echo "The diarization checks prove two emitted speaker IDs, not speaker-label accuracy."
+    date -u '+finished_utc=%Y-%m-%dT%H:%M:%SZ'
+} >"$bundle/README.txt"
+trap - EXIT HUP INT TERM
+echo "acceptance candidate retained at $bundle"
