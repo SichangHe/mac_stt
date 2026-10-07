@@ -27,13 +27,19 @@ jobs:
             echo "$real"
           done | sort -u > probe/xcodes
           cat probe/xcodes
-          status=0
+          # 🧑 "GH Actions are failing ... get testing on a mac without having me do anything"
           while read -r xcode; do
             name=$(basename "$xcode" .app)
             export DEVELOPER_DIR="$xcode/Contents/Developer"
+            swift_version=$(swift --version 2>&1)
+            swift_major=$(printf '%s\n' "$swift_version" | sed -nE 's/.*Apple Swift version ([0-9]+).*/\1/p')
+            if [ -n "$swift_major" ] && [ "$swift_major" -lt 6 ]; then
+              printf '== %s\n%s\nRESULT %s SKIPPED (requires Swift 6)\n' "$name" "$swift_version" "$name" | tee -a probe/summary
+              continue
+            fi
             {
               echo "== $name"
-              swift --version 2>&1
+              printf '%s\n' "$swift_version"
               if swift build -c release --scratch-path "build-$name" > "probe/$name.log" 2>&1 &&
                 "build-$name/release/mac-stt" --help > "probe/$name.help" 2>&1; then
                 echo "RESULT $name ok"
@@ -41,7 +47,6 @@ jobs:
                 echo "RESULT $name FAILED"
                 grep -n "error" "probe/$name.log" | head -40
                 tail -n 40 "probe/$name.log"
-                status=1
               fi
             } 2>&1 | tee -a probe/summary
             cp "build-$name/Package.resolved" "probe/$name.resolved" 2>/dev/null || cp Package.resolved "probe/$name.resolved" 2>/dev/null || true
@@ -49,6 +54,7 @@ jobs:
           done < probe/xcodes
           grep RESULT probe/summary
           ! grep -q FAILED probe/summary
+          grep -q 'RESULT .* ok' probe/summary
       - uses: actions/upload-artifact@v4
         if: always()
         with:
