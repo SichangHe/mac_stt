@@ -1,0 +1,57 @@
+name: probe toolchains
+
+on:
+  push:
+    branches: [probe-toolchains]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: build with every installed Xcode
+        run: |
+          sw_vers
+          uname -m
+          mkdir probe
+          for app in /Applications/Xcode*.app; do
+            real=$(cd "$app" && pwd -P)
+            echo "$real"
+          done | sort -u > probe/xcodes
+          cat probe/xcodes
+          status=0
+          while read -r xcode; do
+            name=$(basename "$xcode" .app)
+            export DEVELOPER_DIR="$xcode/Contents/Developer"
+            {
+              echo "== $name"
+              swift --version 2>&1
+              if swift build -c release --scratch-path "build-$name" > "probe/$name.log" 2>&1 &&
+                "build-$name/release/mac-stt" --help > "probe/$name.help" 2>&1; then
+                echo "RESULT $name ok"
+              else
+                echo "RESULT $name FAILED"
+                grep -n "error" "probe/$name.log" | head -40
+                tail -n 40 "probe/$name.log"
+                status=1
+              fi
+            } 2>&1 | tee -a probe/summary
+            cp "build-$name/Package.resolved" "probe/$name.resolved" 2>/dev/null || cp Package.resolved "probe/$name.resolved" 2>/dev/null || true
+            rm -rf "build-$name"
+          done < probe/xcodes
+          grep RESULT probe/summary
+          ! grep -q FAILED probe/summary
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ matrix.os }}
+          path: probe
+          retention-days: 7
