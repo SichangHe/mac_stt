@@ -1,6 +1,6 @@
 # mac-stt
 
-An original macOS CLI for private, on-device Parakeet transcription. It supports live microphone partials, concurrent file jobs, optional speaker diarization, and clipboard output by default.
+An original macOS CLI for private, on-device Parakeet transcription. It supports live microphone partials (the microphone path has not been run on a physical microphone), concurrent file jobs, optional speaker diarization, and clipboard output by default.
 
 ## requirements
 
@@ -59,4 +59,4 @@ The compact code map is [docs/design.md](docs/design.md). Fine-tuning costs and 
 
 On an Apple Silicon Mac, `scripts/acceptance TWO_SPEAKER_AUDIO BUNDLE_DIR` runs and retains the real feature and ANE-versus-CPU evidence needed for acceptance. The bundle remains a candidate until a human checks the raw power samples and changing live partials. See [hardware evidence](docs/hardware-evidence.md).
 
-The `macOS feature evidence` GitHub workflow runs real TDT v3, Unified, diarization, partial, clipboard, placement, and overlap probes on a hosted arm64 Mac. Diarization uses a checksummed 90-second excerpt from the CC BY 4.0 AMI Meeting Corpus; provenance and the derived transcript are retained, but the audio is not. A green run means only those automatable features passed. File input is not microphone evidence. `powermetrics` results are retained as observed samples or explicitly warned and marked unsupported; configuration and placement never count as observed ANE execution.
+The `macOS feature evidence` GitHub workflow runs real TDT v3, Unified, diarization, partial, clipboard, placement, and overlap probes on a hosted arm64 Mac; the default-clipboard check is marked unsupported if the runner has no usable clipboard. Diarization uses a checksummed 90-second excerpt from the CC BY 4.0 AMI Meeting Corpus; provenance and the derived transcript are retained, but the audio is not. A green run means only those automatable features passed. File input is not microphone evidence. `powermetrics` results are retained as observed samples or explicitly warned and marked unsupported; configuration and placement never count as observed ANE execution.

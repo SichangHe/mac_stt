@@ -56,4 +56,4 @@
   - live measurement stops only `mac-stt`, so Control-C cannot truncate the wrapper
   - `scripts/acceptance` retains the complete real-run acceptance candidate
   - `scripts/ci-acceptance` retains real model evidence on a hosted Apple Silicon runner
-  - hosted evidence uses synthetic file input and never claims microphone coverage
+  - hosted evidence uses file input only (synthetic speech and an AMI excerpt) and never claims microphone coverage
