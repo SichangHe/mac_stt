@@ -1,4 +1,5 @@
 # mac-stt
+(authored by agents unless marked 🧑)
 
 An original macOS CLI for private, on-device Parakeet transcription. It supports live microphone partials (the microphone path has not been run on a physical microphone), concurrent file jobs, optional speaker diarization, and clipboard output by default.
 
@@ -56,6 +57,8 @@ The default `--compute ane` means `.cpuAndNeuralEngine`: CPU and ANE are eligibl
 The compact code map is [docs/design.md](docs/design.md). Fine-tuning costs and the recommended experiment are in [docs/fine-tuning.md](docs/fine-tuning.md). Third-party provenance is recorded in [docs/provenance.md](docs/provenance.md).
 
 ## acceptance
+
+The [2026-10-19 Mac verification](docs/mac-verification-20261019.md) retains current-toolchain build evidence and real speaker-labelled transcripts, including the observed speaker-merging errors.
 
 On an Apple Silicon Mac, `scripts/acceptance TWO_SPEAKER_AUDIO BUNDLE_DIR` runs and retains the real feature and ANE-versus-CPU evidence needed for acceptance. The bundle remains a candidate until a human checks the raw power samples and changing live partials. See [hardware evidence](docs/hardware-evidence.md).
 
