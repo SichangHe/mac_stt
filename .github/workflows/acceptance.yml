@@ -10,7 +10,8 @@ permissions:
 
 jobs:
   automatable-apple-silicon-features:
-    runs-on: macos-15
+    # 🧑 "Mac app builds on a current Mac toolchain and transcribes with separated speakers"
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5

@@ -6,7 +6,10 @@ on:
 
 jobs:
   swift:
-    runs-on: macos-15
+    strategy:
+      matrix:
+        os: [macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
