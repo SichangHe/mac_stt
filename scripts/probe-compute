@@ -1,0 +1,18 @@
+#!/bin/sh
+# Probe which Core ML compute policies can load and run Qwen3-ASR on this machine.
+# usage: scripts/probe-compute MODEL SECONDS_PER_POLICY
+set -u
+model=$1
+limit=$2
+swift build -c release 2>&1 | tail -1
+bin=.build/release/mac-stt
+for policy in cpu gpu ane; do
+    echo "== policy $policy model $model"
+    "$bin" setup --model "$model" --compute "$policy" 2>&1 &
+    pid=$!
+    ( sleep "$limit"; echo "TIMEOUT after ${limit}s"; kill $pid 2>/dev/null ) &
+    dog=$!
+    wait $pid
+    echo "exit=$?"
+    kill $dog 2>/dev/null
+done
