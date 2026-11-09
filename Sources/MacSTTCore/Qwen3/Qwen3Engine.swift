@@ -41,6 +41,7 @@ struct Qwen3Config: Decodable, Sendable {
 @available(macOS 15.0, *)
 public actor Qwen3Engine {
     private static let masked: Float16 = -1e4
+    private static let trace = ProcessInfo.processInfo.environment["MAC_STT_TRACE"] == "1"
     private let config: Qwen3Config
     private let tokenizer: Qwen3Tokenizer
     private let mel: Qwen3Mel
@@ -80,6 +81,11 @@ public actor Qwen3Engine {
         progress("encoder loaded; loading decoder")
         let decoderConfiguration = MLModelConfiguration()
         decoderConfiguration.computeUnits = compute == .ane ? .cpuAndGPU : compute.mlComputeUnits
+        if let override = ProcessInfo.processInfo.environment["MAC_STT_DECODER"],
+            let policy = ComputePolicy(rawValue: override)
+        {
+            decoderConfiguration.computeUnits = policy.mlComputeUnits
+        }
         let decoderURL = root.appendingPathComponent("decoder.mlmodelc")
         decoderConfiguration.functionName = "main"
         prefill = try MLModel(contentsOf: decoderURL, configuration: decoderConfiguration)
@@ -94,10 +100,28 @@ public actor Qwen3Engine {
 
     /// Transcribes up to about 30 seconds of 16 kHz mono audio.
     public func transcribe(_ samples: [Float], language: String? = nil) throws -> String {
+        let clock = ContinuousClock()
+        let t0 = clock.now
         let features = mel.logMel(samples)
         guard features.frames >= 20 else { return "" }
+        let t1 = clock.now
         let (audio, tokenCount) = try encode(features.values, frames: features.frames)
+        let t2 = clock.now
         let ids = try generate(audio: audio, tokenCount: tokenCount, language: language)
+        if Self.trace {
+            let t3 = clock.now
+            func ms(_ d: Duration) -> Double {
+                Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15
+            }
+            FileHandle.standardError.write(
+                Data(
+                    String(
+                        format: "trace: audio %.1fs mel %.0f ms encode %.0f ms (%d windows) decode %.0f ms (%d tokens, %.1f ms/token)\n",
+                        Double(samples.count) / 16_000, ms(t1 - t0), ms(t2 - t1),
+                        (features.frames + 799) / 800, ms(t3 - t2), ids.count,
+                        ms(t3 - t2) / Double(max(1, ids.count))
+                    ).utf8))
+        }
         let body: ArraySlice<Int>
         if let marker = ids.firstIndex(of: config.asrText) {
             body = ids[(marker + 1)...]

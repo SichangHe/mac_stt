@@ -7,6 +7,11 @@ mkdir -p "$out"
 bin=${2:-.build/release/mac-stt}
 data=tests/data
 speech=$data/librispeech-dev-clean-240s
+export MAC_STT_TRACE=1
+# every long step gets a deadline so a stall fails fast with logs instead of using the job timeout
+limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+collect() { cp "$HOME/Library/Application Support/mac-stt/serve.log" "$out/serve.log" 2>/dev/null || true; }
+trap collect EXIT
 note() { printf '%s\n' "$*" | tee -a "$out/summary.txt"; }
 [ "$(uname -m)" = arm64 ] || { echo "needs arm64" >&2; exit 1; }
 { sw_vers; sysctl -n machdep.cpu.brand_string; sysctl -n hw.memsize; } >"$out/system.txt"
@@ -27,11 +32,17 @@ wait $pid || { kill $tailpid $dog 2>/dev/null; echo "setup failed or timed out" 
 kill $tailpid $dog 2>/dev/null || true
 note "setup: $(cat "$out/setup.txt")"
 
+# decoder device comparison on a 15 s clip (trace lines show encode versus decode time)
+for dev in gpu cpu; do
+    MAC_STT_DECODER=$dev limit 900 "$bin" transcribe "$out/in5.wav" --no-clipboard >/dev/null 2>"$out/dev-$dev.err" || true
+    note "decoder on $dev: $(grep -a trace: "$out/dev-$dev.err" | tail -1)"
+done
+
 # accuracy and speed of file transcription at several lengths
 : >"$out/file-latency.tsv"
 for n in 5 15 30 60 120 240; do
     len=$(python3 -I scripts/wavtool.py prefix $speech.wav $speech.tsv $n "$out/in$n.wav" "$out/ref$n.txt")
-    "$bin" transcribe "$out/in$n.wav" --no-clipboard >"$out/file$n.txt" 2>"$out/file$n.err"
+    limit 900 "$bin" transcribe "$out/in$n.wav" --no-clipboard >"$out/file$n.txt" 2>"$out/file$n.err"
     secs=$(sed -n 's/.*processed in \([0-9.]*\) s.*/\1/p' "$out/file$n.err")
     w=$(python3 -I scripts/wavtool.py wer "$out/ref$n.txt" "$out/file$n.txt")
     printf '%s\t%s\t%s\n' "$len" "$secs" "$w" >>"$out/file-latency.tsv"
@@ -41,7 +52,7 @@ done
 # streaming take: audio paced at real time, latency measured from the last sample to final text
 : >"$out/stream-latency.tsv"
 for n in 5 15 30 60 120 240; do
-    "$bin" record --input "$out/in$n.wav" --no-clipboard >"$out/stream$n.txt" 2>"$out/stream$n.err"
+    limit 900 "$bin" record --input "$out/in$n.wav" --no-clipboard >"$out/stream$n.txt" 2>"$out/stream$n.err"
     line=$(grep -a 'speech_seconds=' "$out/stream$n.err" | tail -1)
     fin=$(printf '%s' "$line" | sed -n 's/.*finalize_seconds=\([0-9.]*\).*/\1/p')
     sp=$(printf '%s' "$line" | sed -n 's/.*speech_seconds=\([0-9.]*\).*/\1/p')
@@ -87,7 +98,7 @@ printf 'sentinel' | pbcopy
 note "toggle 1: $("$bin" toggle)"
 sleep 31
 t0=$(python3 -I -c 'import time;print(time.time())')
-"$bin" toggle >"$out/toggle30.txt"
+limit 300 "$bin" toggle >"$out/toggle30.txt"
 t1=$(python3 -I -c 'import time;print(time.time())')
 note "toggle 2 returned after $(python3 -I -c "print('%.3f' % ($t1 - $t0))") s"
 cat "$out/toggle30.txt" | head -5
