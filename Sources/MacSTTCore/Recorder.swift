@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-@preconcurrency import CoreML
 import Darwin
 import FluidAudio
 import Foundation
@@ -47,78 +46,8 @@ public final class MicrophoneCapture: @unchecked Sendable {
     }
 }
 
-public enum LiveRecorder {
-    // 🧑 “transcribe while recording so we don’t wait for forever when the speech is over”
-    public static func record(options: RecordOptions) async throws -> TranscriptDocument {
-        try Hardware.requireAppleSilicon()
-        if options.inputPath == nil { try await requireMicrophonePermission() }
-        let interrupt = InterruptWaiter()
-        let configuration = MLModelConfiguration()
-        configuration.computeUnits = options.compute.mlComputeUnits
-        let unifiedConfig = UnifiedConfig(leftFrames: 70, chunkFrames: 7, rightFrames: 1)
-        let precision: UnifiedEncoderPrecision =
-            options.compute == .gpu || options.compute == .all ? .fp16 : .int8
-        let manager = StreamingUnifiedAsrManager(
-            configuration: configuration,
-            config: unifiedConfig,
-            encoderPrecision: precision
-        )
-        try await manager.loadModels()
-        let diarizerConfiguration = MLModelConfiguration()
-        diarizerConfiguration.computeUnits = options.compute.mlComputeUnits
-        let diarizerModels = options.diarize
-            ? try await DiarizerModels.downloadIfNeeded(configuration: diarizerConfiguration)
-            : nil
-        let diarizationWorker = diarizerModels.map(LiveDiarizationWorker.init)
-        await manager.setPartialTranscriptCallback { text in
-            FileHandle.standardError.write(Data("\r\u{001B}[2K\(text)".utf8))
-        }
-        let capture: MicrophoneCapture?
-        let stream: AsyncThrowingStream<AVAudioPCMBuffer, Error>
-        if let inputPath = options.inputPath {
-            capture = nil
-            stream = try AudioFileBufferReader.stream(path: inputPath)
-            FileHandle.standardError.write(Data("streaming input: \(inputPath)\n".utf8))
-        } else {
-            let microphone = MicrophoneCapture()
-            capture = microphone
-            stream = try microphone.start()
-            FileHandle.standardError.write(Data("recording; press Control-C to finish\n".utf8))
-        }
-        let consumer = Task { () throws -> Void in
-            do {
-                let converter = AudioConverter()
-                var chunker = DiarizationChunker()
-                for try await buffer in stream {
-                    try await manager.appendAudio(buffer)
-                    try await manager.processBufferedAudio()
-                    if let diarizationWorker {
-                        for chunk in chunker.append(try converter.resampleBuffer(buffer)) {
-                            try diarizationWorker.send(chunk)
-                        }
-                    }
-                }
-                if let diarizationWorker, let tail = chunker.finish() {
-                    try diarizationWorker.send(tail)
-                }
-                if options.inputPath != nil { interrupt.trigger() }
-            } catch {
-                interrupt.trigger()
-                throw error
-            }
-        }
-        await interrupt.wait()
-        capture?.stop()
-        try await consumer.value
-        let spans = try await diarizationWorker?.finish() ?? []
-        let text = try await manager.finish()
-        FileHandle.standardError.write(Data("\n".utf8))
-        guard diarizerModels != nil else { return TranscriptDocument(text: text) }
-        let tokens = await manager.consumeTokenTimings()
-        return TranscriptAssembler.assemble(text: text, tokenTimings: tokens, speakerSpans: spans)
-    }
-
-    private static func requireMicrophonePermission() async throws {
+enum MicrophonePermission {
+    static func require() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return
@@ -132,7 +61,16 @@ public enum LiveRecorder {
             throw RecorderError.microphonePermissionDenied
         }
     }
+}
 
+public enum TranscriberError: Error, LocalizedError {
+    case fileMissing(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .fileMissing(let path): "input file does not exist: \(path)"
+        }
+    }
 }
 
 public enum RecorderError: Error, LocalizedError {
@@ -161,7 +99,7 @@ public enum RecorderError: Error, LocalizedError {
     }
 }
 
-private final class InterruptWaiter: @unchecked Sendable {
+final class InterruptWaiter: @unchecked Sendable {
     private let events: AsyncStream<Void>
     private let continuation: AsyncStream<Void>.Continuation
     private let source: DispatchSourceSignal
@@ -192,11 +130,13 @@ private final class InterruptWaiter: @unchecked Sendable {
     }
 }
 
-private final class AudioFileBufferReader: @unchecked Sendable {
+final class AudioFileBufferReader: @unchecked Sendable {
     private static let bufferFrames: AVAudioFrameCount = 4096
     private let file: AVAudioFile
+    private let speed: Double
 
-    private init(path: String) throws {
+    private init(path: String, speed: Double) throws {
+        self.speed = max(speed, 0.1)
         let expanded = (path as NSString).expandingTildeInPath
         guard FileManager.default.fileExists(atPath: expanded) else {
             throw RecorderError.fileMissing(path)
@@ -204,8 +144,8 @@ private final class AudioFileBufferReader: @unchecked Sendable {
         file = try AVAudioFile(forReading: URL(fileURLWithPath: expanded))
     }
 
-    static func stream(path: String) throws -> AsyncThrowingStream<AVAudioPCMBuffer, Error> {
-        let reader = try AudioFileBufferReader(path: path)
+    static func stream(path: String, speed: Double = 1) throws -> AsyncThrowingStream<AVAudioPCMBuffer, Error> {
+        let reader = try AudioFileBufferReader(path: path, speed: speed)
         return AsyncThrowingStream(unfolding: { try await reader.next() })
     }
 
@@ -219,7 +159,7 @@ private final class AudioFileBufferReader: @unchecked Sendable {
         }
         try file.read(into: buffer)
         let seconds = Double(buffer.frameLength) / file.processingFormat.sampleRate
-        try await Task.sleep(for: .seconds(seconds))
+        try await Task.sleep(for: .seconds(seconds / speed))
         return buffer.frameLength == 0 ? nil : buffer
     }
 }
@@ -254,7 +194,7 @@ private final class LiveDiarizationWorker: @unchecked Sendable {
     }
 }
 
-private struct DiarizationChunker {
+struct DiarizationChunker {
     private static let sampleRate = 16_000
     private static let chunkSamples = sampleRate * 10
     private var pending: [Float] = []
@@ -277,7 +217,7 @@ private struct DiarizationChunker {
     }
 }
 
-private final class IncrementalDiarizer {
+final class IncrementalDiarizer {
     private static let sampleRate = 16_000
     private let manager: DiarizerManager
     private var processedSamples = 0

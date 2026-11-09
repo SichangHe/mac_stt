@@ -27,23 +27,45 @@ public struct OutputOptions: Equatable, Sendable {
     }
 }
 
+public struct ModelOptions: Equatable, Sendable {
+    public var variant = Qwen3Variant.large
+    public var language: String?
+    public var compute = ComputePolicy.ane
+    public var diarize = false
+}
+
 public struct TranscribeOptions: Equatable, Sendable {
     public let paths: [String]
-    public let diarize: Bool
-    public let compute: ComputePolicy
+    public let model: ModelOptions
     public let output: OutputOptions
+    public var diarize: Bool { model.diarize }
+    public var compute: ComputePolicy { model.compute }
 }
 
 public struct RecordOptions: Equatable, Sendable {
     public let inputPath: String?
-    public let diarize: Bool
-    public let compute: ComputePolicy
+    public let inputSpeed: Double
+    public let model: ModelOptions
     public let output: OutputOptions
+    public var diarize: Bool { model.diarize }
+    public var compute: ComputePolicy { model.compute }
+}
+
+public struct ServeOptions: Equatable, Sendable {
+    public let model: ModelOptions
+    public let output: OutputOptions
+}
+
+public enum ControlVerb: String, CaseIterable, Sendable {
+    case toggle, start, stop, status, quit
 }
 
 public enum Command: Equatable, Sendable {
     case help
     case doctor
+    case setup(ModelOptions)
+    case serve(ServeOptions)
+    case control(ControlVerb)
     case transcribe(TranscribeOptions)
     case record(RecordOptions)
     case profileModels(paths: [String], compute: ComputePolicy)
@@ -56,6 +78,7 @@ public enum CLIError: Error, LocalizedError, Equatable {
     case unknownCommand(String)
     case unknownOption(String)
     case invalidCompute(String)
+    case invalidValue(String, String)
 
     public var errorDescription: String? {
         switch self {
@@ -65,6 +88,7 @@ public enum CLIError: Error, LocalizedError, Equatable {
         case .unknownCommand(let command): "unknown command: \(command)"
         case .unknownOption(let option): "unknown option: \(option)"
         case .invalidCompute(let value): "invalid compute policy \(value); use ane, gpu, cpu, or all"
+        case .invalidValue(let option, let value): "invalid value \(value) for \(option)"
         }
     }
 }
@@ -78,14 +102,24 @@ public enum CLIParser {
         case "doctor":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .doctor
+        case "setup":
+            let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
+            guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
+            return .setup(parsed.model)
+        case "serve":
+            let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
+            guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
+            return .serve(ServeOptions(model: parsed.model, output: parsed.output))
+        case "toggle", "start", "stop", "status", "quit":
+            guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
+            return .control(ControlVerb(rawValue: name)!)
         case "transcribe":
             let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
             guard !parsed.paths.isEmpty else { throw CLIError.missingInput(name) }
             return .transcribe(
                 TranscribeOptions(
                     paths: parsed.paths,
-                    diarize: parsed.diarize,
-                    compute: parsed.compute,
+                    model: parsed.model,
                     output: parsed.output
                 ))
         case "record":
@@ -94,8 +128,8 @@ public enum CLIParser {
             return .record(
                 RecordOptions(
                     inputPath: parsed.inputPath,
-                    diarize: parsed.diarize,
-                    compute: parsed.compute,
+                    inputSpeed: parsed.speed,
+                    model: parsed.model,
                     output: parsed.output
                 ))
         case "profile-model":
@@ -104,7 +138,7 @@ public enum CLIParser {
             guard parsed.output == OutputOptions() else {
                 throw CLIError.unknownOption("output option")
             }
-            return .profileModels(paths: parsed.paths, compute: parsed.compute)
+            return .profileModels(paths: parsed.paths, compute: parsed.model.compute)
         default: throw CLIError.unknownCommand(name)
         }
     }
@@ -114,20 +148,38 @@ public enum CLIParser {
         allowsDiarization: Bool,
         allowsInput: Bool
     ) throws -> (
-        paths: [String], inputPath: String?, diarize: Bool,
-        compute: ComputePolicy, output: OutputOptions
+        paths: [String], inputPath: String?, speed: Double,
+        model: ModelOptions, output: OutputOptions
     ) {
         var paths: [String] = []
         var inputPath: String?
-        var diarize = false
-        var compute = ComputePolicy.ane
+        var speed = 1.0
+        var model = ModelOptions()
         var output = OutputOptions()
         var index = 0
         while index < arguments.count {
             let argument = arguments[index]
             switch argument {
             case "--diarize" where allowsDiarization:
-                diarize = true
+                model.diarize = true
+            case "--model":
+                index += 1
+                guard index < arguments.count else { throw CLIError.missingValue(argument) }
+                guard let value = Qwen3Variant(rawValue: arguments[index]) else {
+                    throw CLIError.invalidValue(argument, arguments[index])
+                }
+                model.variant = value
+            case "--language":
+                index += 1
+                guard index < arguments.count else { throw CLIError.missingValue(argument) }
+                model.language = arguments[index]
+            case "--input-speed" where allowsInput:
+                index += 1
+                guard index < arguments.count else { throw CLIError.missingValue(argument) }
+                guard let value = Double(arguments[index]), value > 0 else {
+                    throw CLIError.invalidValue(argument, arguments[index])
+                }
+                speed = value
             case "--input" where allowsInput:
                 index += 1
                 guard index < arguments.count else { throw CLIError.missingValue(argument) }
@@ -144,7 +196,7 @@ public enum CLIParser {
                 guard let value = ComputePolicy(rawValue: arguments[index]) else {
                     throw CLIError.invalidCompute(arguments[index])
                 }
-                compute = value
+                model.compute = value
             case let value where value.hasPrefix("-"):
                 throw CLIError.unknownOption(value)
             default:
@@ -152,21 +204,28 @@ public enum CLIParser {
             }
             index += 1
         }
-        return (paths, inputPath, diarize, compute, output)
+        return (paths, inputPath, speed, model, output)
     }
 }
 
 public let usage = """
-mac-stt — local Parakeet speech-to-text for Apple Silicon
+mac-stt — on-device Qwen3-ASR speech-to-text for Apple Silicon
 
 usage:
-  mac-stt record [--input FILE] [--diarize] [--compute ane|gpu|cpu|all] [--no-clipboard] [-o PATH]
-  mac-stt transcribe FILE... [--diarize] [--compute ane|gpu|cpu|all] [--no-clipboard] [-o PATH]
+  mac-stt setup [--model 1.7b|0.6b]      download and verify models, warm the Neural Engine cache
+  mac-stt serve [--diarize] [--no-clipboard]   keep models warm and wait for toggle commands
+  mac-stt toggle                        start recording; run again to stop, transcribe, and copy
+  mac-stt start | stop | status | quit  other control verbs for a running `serve`
+  mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
+  mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
   mac-stt doctor
 
-record prints changing partial text while the microphone is live; press Control-C to finish.
-With --input, record feeds a finite audio file through the same Unified streaming pipeline.
-The default `ane` policy permits CPU and Neural Engine but cannot by itself prove ANE execution.
-Use `profile-model` for the Core ML placement plan and `powermetrics` for runtime confirmation.
+options: --model 1.7b|0.6b  --language CODE (default: detect)  --compute ane|gpu|cpu|all
+         --no-clipboard  -o PATH  --input-speed N (record --input pacing, default 1)
+
+Bind `mac-stt toggle` to a key with any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon,
+BetterTouchTool). The first `toggle` starts `serve` in the background if it is not running.
+Compute `ane` means the audio encoder may use CPU and Neural Engine and the decoder CPU and GPU.
+That is a configuration, not proof of placement: use `profile-model` and `powermetrics`.
 """

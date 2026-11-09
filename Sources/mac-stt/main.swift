@@ -16,25 +16,51 @@ struct MacSTTMain {
     }
 
     private static func run(_ command: Command) async throws {
+        guard #available(macOS 15.0, *) else { throw MainError.needsMacOS15 }
         switch command {
         case .help:
             print(usage)
         case .doctor:
             print("platform: \(Hardware.isAppleSilicon ? "Apple Silicon" : "unsupported non-arm64")")
+            print("macOS: \(ProcessInfo.processInfo.operatingSystemVersionString)")
+            for variant in Qwen3Variant.allCases {
+                print("model qwen3-asr-\(variant.rawValue): \(Qwen3Assets.isComplete(variant) ? "installed" : "not installed (run `mac-stt setup`)")")
+            }
+            print("control socket: \(ControlSocket.path)")
             print("default policy: \(ComputePolicy.ane.explanation)")
             print("configuration claim: ANE eligible, not observed")
-            print("placement evidence: `mac-stt profile-model MODEL.mlmodelc` (preferred device per operation)")
-            print("runtime evidence: `sudo powermetrics --samplers ane_power -i 200` during transcription")
             try Hardware.requireAppleSilicon()
+        case .setup(let options):
+            let started = Date()
+            let engine = Qwen3Runtime.engineTask(variant: options.variant, compute: options.compute)
+            let diarizer = Qwen3Runtime.diarizerTask(compute: options.compute)
+            let loaded = try await engine.value
+            _ = try await diarizer.value
+            let load = Date().timeIntervalSince(started)
+            let warm = Date()
+            _ = try await loaded.transcribe([Float](repeating: 0, count: 16_000))
+            print(String(format: "setup complete: models ready in %.1f s, first inference %.2f s", load, Date().timeIntervalSince(warm)))
+        case .serve(let options):
+            signal(SIGPIPE, SIG_IGN)
+            let service = DictationService(options: options)
+            let server = ControlServer { verb in await service.handle(verb) }
+            try server.start()
+            FileHandle.standardError.write(Data("mac-stt serve listening on \(ControlSocket.path)\n".utf8))
+            try await Task.sleep(for: .seconds(Double(Int32.max)))
+        case .control(let verb):
+            print(try await ControlClient.send(verb))
         case .transcribe(let options):
             guard options.paths.count == 1 || options.output.outputPath == nil else {
                 throw MainError.oneOutputForMultipleInputs
             }
-            let models = try await TranscriptionModels.load(
-                diarization: options.diarize,
-                compute: options.compute
-            )
-            let documents = try await FileTranscriber.transcribe(paths: options.paths, models: models)
+            let model = options.model
+            let engine = Qwen3Runtime.engineTask(variant: model.variant, compute: model.compute)
+            let diarizer = model.diarize ? Qwen3Runtime.diarizerTask(compute: model.compute) : nil
+            let diarizerModels = try await diarizer?.value
+            let documents = try await ConcurrentProcessor.map(options.paths) { path in
+                try await Qwen3Runtime.transcribeFile(
+                    path: path, engineTask: engine, diarizer: diarizerModels, language: model.language)
+            }
             let document: TranscriptDocument
             if documents.count == 1 {
                 document = documents[0]
@@ -44,10 +70,45 @@ struct MacSTTMain {
                 }.joined(separator: "\n\n")
                 document = TranscriptDocument(text: text)
             }
+            for (path, result) in zip(options.paths, documents) {
+                FileHandle.standardError.write(
+                    Data(String(format: "%@: processed in %.2f s\n", path, result.processingSeconds).utf8))
+            }
             try ResultWriter.write(document, options: options.output)
         case .record(let options):
-            let document = try await LiveRecorder.record(options: options)
-            try ResultWriter.write(document, options: options.output)
+            let model = options.model
+            let engine = Qwen3Runtime.engineTask(variant: model.variant, compute: model.compute)
+            let diarizer = model.diarize ? Qwen3Runtime.diarizerTask(compute: model.compute) : nil
+            let input: AudioInput
+            if let path = options.inputPath {
+                input = .file(path: path, speed: options.inputSpeed)
+            } else {
+                try await MicrophonePermission.require()
+                input = .microphone
+            }
+            let interrupt = InterruptWaiter()
+            let take = try DictationTake(
+                input: input, engine: engine, diarizer: diarizer, language: model.language,
+                onPartial: { text in
+                    FileHandle.standardError.write(Data("\r\u{001B}[2K\(text)".utf8))
+                })
+            FileHandle.standardError.write(
+                Data((options.inputPath == nil ? "recording; press Control-C to finish\n" : "streaming input\n").utf8))
+            if options.inputPath != nil {
+                Task {
+                    try? await take.waitForInputEnd()
+                    interrupt.trigger()
+                }
+            }
+            await interrupt.wait()
+            let result = try await take.stop()
+            FileHandle.standardError.write(
+                Data(
+                    String(
+                        format: "\nspeech_seconds=%.1f finalize_seconds=%.3f\n", result.speechSeconds,
+                        result.finalizeSeconds
+                    ).utf8))
+            try ResultWriter.write(result.document, options: options.output)
         case .profileModels(let paths, let compute):
             print("policy: \(compute.explanation)")
             for report in try await ModelProfiler.profile(paths: paths, compute: compute) {
@@ -60,8 +121,12 @@ struct MacSTTMain {
 
 private enum MainError: Error, LocalizedError {
     case oneOutputForMultipleInputs
+    case needsMacOS15
 
     var errorDescription: String? {
-        "--output accepts one input; omit it for a combined multi-file result"
+        switch self {
+        case .oneOutputForMultipleInputs: "--output accepts one input; omit it for a combined multi-file result"
+        case .needsMacOS15: "macOS 15 or newer is required (Core ML model state)"
+        }
     }
 }

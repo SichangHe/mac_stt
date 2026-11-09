@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "mac-stt",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     products: [
         .library(name: "MacSTTCore", targets: ["MacSTTCore"]),
         .executable(name: "mac-stt", targets: ["mac-stt"]),
@@ -16,7 +16,14 @@ let package = Package(
             name: "MacSTTCore",
             dependencies: [.product(name: "FluidAudio", package: "FluidAudio")]
         ),
-        .executableTarget(name: "mac-stt", dependencies: ["MacSTTCore"]),
+        .executableTarget(
+            name: "mac-stt",
+            dependencies: ["MacSTTCore"],
+            linkerSettings: [
+                // Gives the binary its own microphone-permission identity.
+                .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Resources/Info.plist"])
+            ]
+        ),
         .testTarget(
             name: "MacSTTCoreTests",
             dependencies: [
