@@ -1,0 +1,27 @@
+name: end-to-end
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: runner label
+        default: macos-15
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - name: run
+        run: scripts/e2e e2e-out
+      - name: retain
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-${{ github.run_id }}
+          path: e2e-out
+          retention-days: 14

@@ -1,0 +1,44 @@
+#!/bin/sh
+# End-to-end test on Apple Silicon macOS: build, setup, accuracy, latency, diarization, toggle flow.
+# usage: scripts/e2e OUT_DIR [BINARY]   (default binary: build from source)
+set -eu
+out=$1
+mkdir -p "$out"
+bin=${2:-.build/release/mac-stt}
+data=tests/data
+speech=$data/librispeech-dev-clean-240s
+note() { printf '%s\n' "$*" | tee -a "$out/summary.txt"; }
+[ "$(uname -m)" = arm64 ] || { echo "needs arm64" >&2; exit 1; }
+{ sw_vers; sysctl -n machdep.cpu.brand_string; sysctl -n hw.memsize; } >"$out/system.txt"
+cat "$out/system.txt" | tee -a "$out/summary.txt" >/dev/null
+
+if [ -z "${2:-}" ]; then swift build -c release >"$out/build.log" 2>&1; fi
+"$bin" doctor >"$out/doctor.txt" 2>&1 || true
+
+# setup: download, verify, warm
+/usr/bin/time -p "$bin" setup >"$out/setup.txt" 2>"$out/setup.err" || { tail -30 "$out/setup.err"; exit 1; }
+note "setup: $(cat "$out/setup.txt")"
+
+# accuracy and speed of file transcription at several lengths
+: >"$out/file-latency.tsv"
+for n in 5 15 30 60 120 240; do
+    len=$(python3 -I scripts/wavtool.py prefix $speech.wav $speech.tsv $n "$out/in$n.wav" "$out/ref$n.txt")
+    "$bin" transcribe "$out/in$n.wav" --no-clipboard >"$out/file$n.txt" 2>"$out/file$n.err"
+    secs=$(sed -n 's/.*processed in \([0-9.]*\) s.*/\1/p' "$out/file$n.err")
+    w=$(python3 -I scripts/wavtool.py wer "$out/ref$n.txt" "$out/file$n.txt")
+    printf '%s\t%s\t%s\n' "$len" "$secs" "$w" >>"$out/file-latency.tsv"
+    note "file: speech ${len}s processed in ${secs}s WER ${w}%"
+done
+
+# streaming take: audio paced at real time, latency measured from the last sample to final text
+: >"$out/stream-latency.tsv"
+for n in 5 15 30 60 120 240; do
+    "$bin" record --input "$out/in$n.wav" --no-clipboard >"$out/stream$n.txt" 2>"$out/stream$n.err"
+    line=$(grep -a 'speech_seconds=' "$out/stream$n.err" | tail -1)
+    fin=$(printf '%s' "$line" | sed -n 's/.*finalize_seconds=\([0-9.]*\).*/\1/p')
+    sp=$(printf '%s' "$line" | sed -n 's/.*speech_seconds=\([0-9.]*\).*/\1/p')
+    w=$(python3 -I scripts/wavtool.py wer "$out/ref$n.txt" "$out/stream$n.txt")
+    printf '%s\t%s\t%s\n' "$sp" "$fin" "$w" >>"$out/stream-latency.tsv"
+    note "stream: speech ${sp}s finalize ${fin}s WER ${w}%"
+done
+grep -a -c 'partial\|' "$out/stream60.err" >/dev/null 2>&1 || true
