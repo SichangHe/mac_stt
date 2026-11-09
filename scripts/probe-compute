@@ -1,18 +1,12 @@
 #!/bin/sh
-# Probe which Core ML compute policies can load and run Qwen3-ASR on this machine.
-# usage: scripts/probe-compute MODEL SECONDS_PER_POLICY
+# Probe Core ML decoder loading. usage: scripts/probe-compute MODEL POLICY SECONDS
 set -u
-model=$1
-limit=$2
+model=$1; policy=$2; limit=$3
 swift build -c release 2>&1 | tail -1
 bin=.build/release/mac-stt
-for policy in cpu gpu ane; do
-    echo "== policy $policy model $model"
-    "$bin" setup --model "$model" --compute "$policy" 2>&1 &
-    pid=$!
-    ( sleep "$limit"; echo "TIMEOUT after ${limit}s"; kill $pid 2>/dev/null ) &
-    dog=$!
-    wait $pid
-    echo "exit=$?"
-    kill $dog 2>/dev/null
-done
+"$bin" setup --model "$model" --compute "$policy" 2>&1 &
+pid=$!
+sleep 90
+echo "== sample at 90s"; sample $pid 5 -file /tmp/sample.txt >/dev/null 2>&1; grep -E "Thread_|MLModel|ANE|E5|e5|Espresso|MIL|compile|specializ|main$|start" /tmp/sample.txt | head -60
+( sleep "$limit"; echo "TIMEOUT"; kill $pid 2>/dev/null ) &
+wait $pid; echo "exit=$?"
