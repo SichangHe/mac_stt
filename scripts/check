@@ -2,7 +2,7 @@
 set -eu
 check_log=$(mktemp "${TMPDIR:-/tmp}/mac-stt-check.XXXXXX")
 trap 'rm -f "$check_log"' EXIT
-for script in scripts/check scripts/measure-ane scripts/e2e install.sh; do
+for script in scripts/check scripts/measure-ane scripts/e2e scripts/e2e-features install.sh; do
     sh -n "$script"
 done
 if ! swift test >"$check_log" 2>&1; then

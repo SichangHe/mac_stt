@@ -1,65 +1,57 @@
 # mac-stt
-(authored by agents unless marked 🧑)
 
-An original macOS CLI for private, on-device Parakeet transcription. It supports live microphone partials (the microphone path has not been run on a physical microphone), concurrent file jobs, optional speaker diarization, and clipboard output by default.
-
-## requirements
-
-- Apple Silicon Mac
-- macOS 14 or newer; macOS 14.4 or newer for model placement reports
-- Xcode 16 or a Swift 6 toolchain
-- about 1 GB free for the first model download; diarization downloads additional models
-- microphone permission for `record`
+On-device speech-to-text for Apple Silicon. Bind one command to a key: press once to record, press again to get the text on your clipboard.
 
 ## install
 
 ```sh
-swift build -c release
-sudo install .build/release/mac-stt /usr/local/bin/mac-stt
+curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh | sh
 ```
 
-The first inference downloads model assets from Hugging Face. Later runs use FluidAudio's local cache.
+The script downloads the latest release, checks its SHA-256, installs `~/.local/bin/mac-stt`, then downloads and verifies the models (about 2.7 GB) and warms Core ML's cache. It needs an Apple Silicon Mac on macOS 26 or newer and no `sudo`. See [requirements](#requirements).
 
 ## use
 
+1. Bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool).
+2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
+3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.
+
+Other commands:
+
 ```sh
-# English live partial text on stderr; final result to stdout and clipboard
-mac-stt record
-
-# exercise the Unified streaming pipeline from a finite file
-mac-stt record --input speech.wav --diarize --no-clipboard
-
-# add speaker labels to the final result
-mac-stt record --diarize
-
-# process files concurrently and combine their results on the clipboard
-mac-stt transcribe interview.m4a memo.wav --diarize
-
-# keep the clipboard unchanged
-mac-stt transcribe memo.wav --no-clipboard -o memo.txt
-
-# inspect Core ML's preferred device plan for compiled model bundles
-mac-stt profile-model /path/to/Encoder.mlmodelc --compute ane
+mac-stt record                 # one take in this terminal; Control-C finishes; partials on stderr
+mac-stt record --input a.wav   # same pipeline fed from a file at real-time pace
+mac-stt transcribe a.m4a b.wav # files, concurrently
+mac-stt serve --diarize --no-clipboard   # server options: speaker labels, keep clipboard untouched
+mac-stt status | stop | quit
 ```
 
-The default `--compute ane` means `.cpuAndNeuralEngine`: CPU and ANE are eligible and GPU is excluded. That setting is not proof of ANE execution. `profile-model` reports planned placement per operation. For observed runtime evidence, run `sudo powermetrics --samplers ane_power -i 200` while transcribing and retain its output with the CLI result. See [hardware evidence](docs/hardware-evidence.md).
+Common options: `--diarize` (speaker labels), `--no-clipboard`, `-o FILE`, `--language en` (default: detect), `--model 1.7b|0.6b`.
 
-## behavior
+## how it works
 
-- `record` copies audio buffers into an asynchronous stream before inference, so capture does not wait on Core ML
-- the live model is English Parakeet Unified 0.6B, derived from Parakeet TDT v2; file transcription uses multilingual TDT v3
-- partial text changes while recording; Control-C flushes the final text
-- capture buffers at most about 5.5 seconds at 48 kHz; overload fails explicitly instead of losing audio or growing memory without bound
-- `transcribe FILE...` creates an independent manager task per input and preserves argument order in the combined output
-- `--diarize` assigns ASR words to overlapping speaker spans by timestamp; live diarization consumes bounded 10-second chunks
-- stdout always receives the final result; the clipboard does too unless `--no-clipboard` is present
+- Model: Qwen3-ASR 1.7B (Alibaba Qwen team, Apache-2.0), in a Core ML conversion by Raymond Chin pinned by commit. See [docs/model-choice.md](docs/model-choice.md) for the leaderboard evidence and the risks of that choice.
+- Capture never waits for inference. The capture callback copies buffers into a bounded queue; one consumer resamples to 16 kHz and appends to a session. Overflow fails loudly instead of dropping audio.
+- Streaming: the session cuts audio into segments at a pause (after 8 s) or at the quietest point before 30 s, and transcribes each segment in the background while you keep talking. When you stop, only the last segment remains, so the wait after you stop does not grow with total speech length.
+- Partial text appears about every 1.5 s from the current unfinished segment.
+- A new take can start while the previous one is still being transcribed.
+- Speakers (`--diarize`): FluidAudio's diarizer runs in 10 s chunks during recording. A segment with one speaker is labeled directly; a segment with a speaker change is re-transcribed per speaker turn.
+- Compute: the audio encoder is configured for CPU and Neural Engine, the int8 decoder for CPU and GPU (Core ML state holds the KV cache). This is a configuration. Placement is not observed on hosted CI; see [docs/hardware-evidence.md](docs/hardware-evidence.md).
 
-The compact code map is [docs/design.md](docs/design.md). Fine-tuning costs and the recommended experiment are in [docs/fine-tuning.md](docs/fine-tuning.md). Third-party provenance is recorded in [docs/provenance.md](docs/provenance.md).
+## requirements
 
-## acceptance
+- Apple Silicon Mac, macOS 26 or newer. On a hosted macOS 15.8 runner the decoder's first Core ML compile did not finish in 7 minutes under any compute policy, so macOS 15 is blocked (`MAC_STT_FORCE=1` overrides). On macOS 26.7 it loaded in seconds.
+- About 3 GB of disk for models in `~/Library/Application Support/mac-stt/models`.
 
-The [2026-10-19 Mac verification](docs/mac-verification-20261019.md) retains current-toolchain build evidence and real speaker-labelled transcripts, including the observed speaker-merging errors.
+## measured results
 
-On an Apple Silicon Mac, `scripts/acceptance TWO_SPEAKER_AUDIO BUNDLE_DIR` runs and retains the real feature and ANE-versus-CPU evidence needed for acceptance. The bundle remains a candidate until a human checks the raw power samples and changing live partials. See [hardware evidence](docs/hardware-evidence.md).
+See [docs/evidence.md](docs/evidence.md). Everything there came from GitHub-hosted virtual Macs, which have no physical microphone and may not expose the Neural Engine or a real GPU; absolute speed there is not representative of a physical Mac.
 
-The `macOS feature evidence` GitHub workflow runs real TDT v3, Unified, diarization, partial, clipboard, placement, and overlap probes on a hosted arm64 Mac; the default-clipboard check is marked unsupported if the runner has no usable clipboard. Diarization uses a checksummed 90-second excerpt from the CC BY 4.0 AMI Meeting Corpus; provenance and the derived transcript are retained, but the audio is not. A green run means only those automatable features passed. File input is not microphone evidence. `powermetrics` results are retained as observed samples or explicitly warned and marked unsupported; configuration and placement never count as observed ANE execution.
+## development
+
+```sh
+swift build -c release && swift test
+scripts/e2e out-dir     # end-to-end run on Apple Silicon macOS (downloads models)
+```
+
+Code map: [docs/design.md](docs/design.md). Third-party provenance: [docs/provenance.md](docs/provenance.md).

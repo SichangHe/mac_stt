@@ -32,12 +32,6 @@ wait $pid || { kill $tailpid $dog 2>/dev/null; echo "setup failed or timed out" 
 kill $tailpid $dog 2>/dev/null || true
 note "setup: $(cat "$out/setup.txt")"
 
-# decoder device comparison on a 15 s clip (trace lines show encode versus decode time)
-for dev in gpu cpu; do
-    MAC_STT_DECODER=$dev limit 900 "$bin" transcribe "$out/in5.wav" --no-clipboard >/dev/null 2>"$out/dev-$dev.err" || true
-    note "decoder on $dev: $(grep -a trace: "$out/dev-$dev.err" | tail -1)"
-done
-
 # accuracy and speed of file transcription at several lengths
 : >"$out/file-latency.tsv"
 for n in 5 15 30 60 120 240; do
@@ -51,7 +45,7 @@ done
 
 # streaming take: audio paced at real time, latency measured from the last sample to final text
 : >"$out/stream-latency.tsv"
-for n in 5 15 30 60 120 240; do
+for n in 5 15 30 60; do
     limit 900 "$bin" record --input "$out/in$n.wav" --no-clipboard >"$out/stream$n.txt" 2>"$out/stream$n.err"
     line=$(grep -a 'speech_seconds=' "$out/stream$n.err" | tail -1)
     fin=$(printf '%s' "$line" | sed -n 's/.*finalize_seconds=\([0-9.]*\).*/\1/p')
@@ -61,66 +55,3 @@ for n in 5 15 30 60 120 240; do
     note "stream: speech ${sp}s finalize ${fin}s WER ${w}%"
 done
 
-# partial results appear while recording
-tr '\r' '\n' <"$out/stream60.err" | sed 's/\x1b\[2K//' | grep -a -v 'speech_seconds\|^$\|streaming input' | sort -u >"$out/stream60-partials.txt"
-note "partials observed during the 60 s take: $(wc -l <"$out/stream60-partials.txt" | tr -d ' ')"
-
-# diarization on real multi-speaker meeting speech (AMI ES2004a, seconds 300 to 390)
-ami_url=https://huggingface.co/datasets/FluidInference/ami-corpus-mirror/resolve/main/sdm/ES2004a.Mix-Headset.wav
-curl --fail --location --silent --show-error --retry 3 "$ami_url" -o "$out/ami-full.wav"
-shasum -a 256 "$out/ami-full.wav" | tee "$out/ami-full.sha256"
-python3 -I - "$out/ami-full.wav" "$out/ami.wav" <<'PY'
-import sys, wave
-w = wave.open(sys.argv[1]); r = w.getframerate()
-w.setpos(300 * r); frames = w.readframes(90 * r)
-o = wave.open(sys.argv[2], "wb"); o.setnchannels(w.getnchannels()); o.setsampwidth(w.getsampwidth()); o.setframerate(r)
-o.writeframes(frames); o.close()
-PY
-rm "$out/ami-full.wav"
-"$bin" transcribe "$out/ami.wav" --diarize --no-clipboard >"$out/ami-file.txt" 2>"$out/ami-file.err"
-"$bin" record --input "$out/ami.wav" --diarize --no-clipboard >"$out/ami-stream.txt" 2>"$out/ami-stream.err"
-for f in ami-file ami-stream; do
-    n=$(sed -n 's/^\[[^]]*\] \([^:]*\):.*/\1/p' "$out/$f.txt" | sed '/^unknown$/d' | sort -u | wc -l | tr -d ' ')
-    note "diarization $f: $n distinct speakers"
-    head -8 "$out/$f.txt" | tee -a "$out/summary.txt"
-done
-
-# clipboard: opt-out keeps it, default replaces it
-printf 'sentinel' | pbcopy
-"$bin" transcribe "$out/in5.wav" --no-clipboard >/dev/null 2>&1
-[ "$(pbpaste)" = sentinel ] && note "clipboard opt-out: PASS (sentinel unchanged)" || note "clipboard opt-out: FAIL"
-"$bin" transcribe "$out/in5.wav" >"$out/clip.stdout" 2>/dev/null
-if [ "$(pbpaste)" = "$(cat "$out/clip.stdout")" ]; then note "clipboard default: PASS"; else note "clipboard default: FAIL"; fi
-
-# toggle flow with a fake microphone (a WAV file paced at real time through the real capture path)
-export MAC_STT_FAKE_MIC="$out/in30.wav"
-printf 'sentinel' | pbcopy
-note "toggle 1: $("$bin" toggle)"
-sleep 31
-t0=$(python3 -I -c 'import time;print(time.time())')
-limit 300 "$bin" toggle >"$out/toggle30.txt"
-t1=$(python3 -I -c 'import time;print(time.time())')
-note "toggle 2 returned after $(python3 -I -c "print('%.3f' % ($t1 - $t0))") s"
-cat "$out/toggle30.txt" | head -5
-[ "$(pbpaste)" = "$(cat "$out/toggle30.txt")" ] && note "toggle clipboard: PASS" || note "toggle clipboard: FAIL"
-note "toggle WER: $(python3 -I scripts/wavtool.py wer "$out/ref30.txt" "$out/toggle30.txt")%"
-# recording is not blocked by a transcription in flight
-export MAC_STT_FAKE_MIC="$out/in60.wav"
-"$bin" toggle >/dev/null
-sleep 20
-"$bin" toggle >"$out/overlap-a.txt" &
-sleep 0.05
-note "overlap: new take started while previous finalizes: $("$bin" toggle)"
-wait
-sleep 5
-"$bin" toggle >"$out/overlap-b.txt"
-note "overlap: first take text bytes $(wc -c <"$out/overlap-a.txt" | tr -d ' '), second take text bytes $(wc -c <"$out/overlap-b.txt" | tr -d ' ')"
-"$bin" quit || true
-cp "$HOME/Library/Application Support/mac-stt/serve.log" "$out/serve.log" 2>/dev/null || true
-grep -a 'finalize_seconds\|models ready' "$out/serve.log" | tee -a "$out/summary.txt"
-
-# placement plans for the compiled models
-for m in encoder decoder; do
-    "$bin" profile-model "$HOME/Library/Application Support/mac-stt/models/qwen3-asr-1.7b/$m.mlmodelc" >"$out/placement-$m.txt" 2>&1 || true
-    head -6 "$out/placement-$m.txt" | tee -a "$out/summary.txt"
-done
