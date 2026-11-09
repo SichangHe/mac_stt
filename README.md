@@ -36,7 +36,7 @@ Common options: `--diarize` (speaker labels), `--no-clipboard`, `-o FILE`, `--la
 - Partial text appears about every 1.5 s from the current unfinished segment.
 - A new take can start while the previous one is still being transcribed.
 - Speakers (`--diarize`): FluidAudio's diarizer runs in 10 s chunks during recording. A segment with one speaker is labeled directly; a segment with a speaker change is re-transcribed per speaker turn.
-- Compute: the audio encoder is configured for CPU and Neural Engine, the int8 decoder for CPU and GPU (Core ML state holds the KV cache). This is a configuration. Placement is not observed on hosted CI; see [docs/hardware-evidence.md](docs/hardware-evidence.md).
+- Compute: the audio encoder is configured for CPU and Neural Engine, the int8 decoder for CPU and GPU (Core ML state holds the KV cache). This is a configuration. Neural Engine and GPU placement were not observed; see [docs/evidence.md](docs/evidence.md).
 
 ## requirements
 
@@ -54,4 +54,4 @@ swift build -c release && swift test
 scripts/e2e out-dir     # end-to-end run on Apple Silicon macOS (downloads models)
 ```
 
-Code map: [docs/design.md](docs/design.md). Third-party provenance: [docs/provenance.md](docs/provenance.md).
+Code is in `Sources/MacSTTCore` (`Qwen3/` holds the model pipeline). Third-party provenance: [docs/provenance.md](docs/provenance.md).
