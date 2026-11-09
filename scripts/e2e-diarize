@@ -1,0 +1,40 @@
+#!/bin/sh
+# Short feature checks on Apple Silicon macOS using a released or built binary.
+# usage: scripts/e2e-features OUT_DIR [BINARY]
+set -eu
+out=$1
+mkdir -p "$out"
+bin=${2:-.build/release/mac-stt}
+speech=tests/data/librispeech-dev-clean-240s
+export MAC_STT_TRACE=1
+limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
+collect() { cp "$HOME/Library/Application Support/mac-stt/serve.log" "$out/serve.log" 2>/dev/null || true; }
+trap collect EXIT
+note() { printf '%s\n' "$*" | tee -a "$out/summary.txt"; }
+now() { python3 -I -c 'import time;print(time.time())'; }
+[ -n "${2:-}" ] || swift build -c release >"$out/build.log" 2>&1
+limit 1200 "$bin" setup >"$out/setup.txt" 2>&1
+note "setup: $(tail -1 "$out/setup.txt")"
+
+# 4. diarization on real multi-speaker meeting speech (AMI ES2004a seconds 300 to 390)
+url=https://huggingface.co/datasets/FluidInference/ami-corpus-mirror/resolve/main/sdm/ES2004a.Mix-Headset.wav
+curl --fail --location --silent --show-error --retry 3 "$url" -o "$out/ami-full.wav"
+shasum -a 256 "$out/ami-full.wav" | tee "$out/ami-full.sha256"
+python3 -I - "$out/ami-full.wav" "$out/ami.wav" <<'PY'
+import sys, wave
+w = wave.open(sys.argv[1]); r = w.getframerate()
+w.setpos(300 * r); frames = w.readframes(90 * r)
+o = wave.open(sys.argv[2], "wb"); o.setnchannels(w.getnchannels()); o.setsampwidth(w.getsampwidth()); o.setframerate(r)
+o.writeframes(frames); o.close()
+PY
+rm "$out/ami-full.wav"
+limit 1500 "$bin" transcribe "$out/ami.wav" --diarize --no-clipboard >"$out/ami-file.txt" 2>"$out/ami-file.err" || note "diarize file run failed"
+n=$(sed -n 's/^\[[^]]*\] \([^:]*\):.*/\1/p' "$out/ami-file.txt" | sed '/^unknown$/d' | sort -u | wc -l | tr -d ' ')
+note "diarization (file): $n distinct speakers"
+head -8 "$out/ami-file.txt" | tee -a "$out/summary.txt"
+limit 1500 "$bin" record --input "$out/ami.wav" --diarize --no-clipboard >"$out/ami-stream.txt" 2>"$out/ami-stream.err" || note "diarize stream run failed"
+n=$(sed -n 's/^\[[^]]*\] \([^:]*\):.*/\1/p' "$out/ami-stream.txt" | sed '/^unknown$/d' | sort -u | wc -l | tr -d ' ')
+note "diarization (streaming): $n distinct speakers"
+head -8 "$out/ami-stream.txt" | tee -a "$out/summary.txt"
+tr '\r' '\n' <"$out/ami-stream.err" | sed 's/\x1b\[2K//' | grep -a -v 'speech_seconds\|^$\|streaming input\|trace:' | sort -u >"$out/ami-partials.txt"
+note "partials seen during the streaming take: $(wc -l <"$out/ami-partials.txt" | tr -d ' ')"

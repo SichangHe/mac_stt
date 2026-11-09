@@ -7,7 +7,7 @@ on:
         description: runner label
         default: macos-26
       script:
-        description: scripts/e2e (latency vs length) or scripts/e2e-features (clipboard, toggle, overlap, diarization)
+        description: scripts/e2e, scripts/e2e-features, or scripts/e2e-diarize
         default: scripts/e2e-features
 
 permissions:
