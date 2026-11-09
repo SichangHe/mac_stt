@@ -66,19 +66,22 @@ public final class Qwen3Session: @unchecked Sendable {
 
     /// Flushes the tail, waits for every segment, and returns them in order.
     public func finish() async throws -> [SpeechSegment] {
-        lock.lock()
-        let running = partialTask
-        partialTask = nil
-        running?.cancel()
-        if pending.count >= Self.rate / 4 { commit(upTo: pending.count) }
-        let work = tasks
-        lock.unlock()
+        let work = drain()
         var segments: [SpeechSegment] = []
         for task in work {
             let segment = try await task.value
             if !segment.text.isEmpty { segments.append(segment) }
         }
         return segments
+    }
+
+    private func drain() -> [Task<SpeechSegment, Error>] {
+        lock.lock()
+        defer { lock.unlock() }
+        partialTask?.cancel()
+        partialTask = nil
+        if pending.count >= Self.rate / 4 { commit(upTo: pending.count) }
+        return tasks
     }
 
     public func recordedAudio() -> [Float] {
