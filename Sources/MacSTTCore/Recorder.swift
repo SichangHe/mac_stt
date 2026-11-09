@@ -46,8 +46,8 @@ public final class MicrophoneCapture: @unchecked Sendable {
     }
 }
 
-enum MicrophonePermission {
-    static func require() async throws {
+public enum MicrophonePermission {
+    public static func require() async throws {
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized:
             return
@@ -99,12 +99,12 @@ public enum RecorderError: Error, LocalizedError {
     }
 }
 
-final class InterruptWaiter: @unchecked Sendable {
+public final class InterruptWaiter: @unchecked Sendable {
     private let events: AsyncStream<Void>
     private let continuation: AsyncStream<Void>.Continuation
     private let source: DispatchSourceSignal
 
-    init() {
+    public init() {
         signal(SIGINT, SIG_IGN)
         let pair = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         events = pair.stream
@@ -119,11 +119,11 @@ final class InterruptWaiter: @unchecked Sendable {
         source.resume()
     }
 
-    func wait() async {
+    public func wait() async {
         for await _ in events { return }
     }
 
-    func trigger() {
+    public func trigger() {
         continuation.yield(())
         continuation.finish()
         source.cancel()
