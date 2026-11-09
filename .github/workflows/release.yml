@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - name: build
+        run: |
+          swift build -c release
+          mkdir dist
+          cp .build/release/mac-stt dist/mac-stt
+          strip dist/mac-stt
+          codesign --force --sign - dist/mac-stt
+          dist/mac-stt help >/dev/null
+          lipo -info dist/mac-stt
+          tar -czf mac-stt-macos-arm64.tar.gz -C dist mac-stt
+          shasum -a 256 mac-stt-macos-arm64.tar.gz > mac-stt-macos-arm64.tar.gz.sha256
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes \
+            mac-stt-macos-arm64.tar.gz mac-stt-macos-arm64.tar.gz.sha256

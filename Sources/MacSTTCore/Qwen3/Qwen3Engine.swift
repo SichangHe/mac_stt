@@ -69,10 +69,15 @@ public actor Qwen3Engine {
         guard embeddings.count == config.vocab * config.hidden, scales.count == config.vocab else {
             throw Qwen3Error.badAsset("embedding table size")
         }
+        func progress(_ message: String) {
+            FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
+        }
+        progress("loading encoder (\(compute.rawValue))")
         let encoderConfiguration = MLModelConfiguration()
         encoderConfiguration.computeUnits = compute.mlComputeUnits
         encoder = try MLModel(
             contentsOf: root.appendingPathComponent("encoder.mlmodelc"), configuration: encoderConfiguration)
+        progress("encoder loaded; loading decoder")
         let decoderConfiguration = MLModelConfiguration()
         decoderConfiguration.computeUnits = compute == .ane ? .cpuAndGPU : compute.mlComputeUnits
         let decoderURL = root.appendingPathComponent("decoder.mlmodelc")
@@ -80,6 +85,7 @@ public actor Qwen3Engine {
         prefill = try MLModel(contentsOf: decoderURL, configuration: decoderConfiguration)
         decoderConfiguration.functionName = "step"
         stepModel = try MLModel(contentsOf: decoderURL, configuration: decoderConfiguration)
+        progress("decoder loaded")
         state = prefill.makeState()
         invFrequency = (0..<64).map { pow(1_000_000.0, -Double($0) / 64.0) }
     }

@@ -16,7 +16,15 @@ if [ -z "${2:-}" ]; then swift build -c release >"$out/build.log" 2>&1; fi
 "$bin" doctor >"$out/doctor.txt" 2>&1 || true
 
 # setup: download, verify, warm
-/usr/bin/time -p "$bin" setup >"$out/setup.txt" 2>"$out/setup.err" || { tail -30 "$out/setup.err"; exit 1; }
+# watchdog: a hung model load must fail the run instead of consuming the whole job timeout
+"$bin" setup >"$out/setup.txt" 2>&1 &
+pid=$!
+( sleep 1500; kill $pid 2>/dev/null ) &
+dog=$!
+tail -f "$out/setup.txt" &
+tailpid=$!
+wait $pid || { kill $tailpid $dog 2>/dev/null; echo "setup failed or timed out" >&2; exit 1; }
+kill $tailpid $dog 2>/dev/null || true
 note "setup: $(cat "$out/setup.txt")"
 
 # accuracy and speed of file transcription at several lengths
