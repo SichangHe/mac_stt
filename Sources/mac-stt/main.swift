@@ -16,7 +16,12 @@ struct MacSTTMain {
     }
 
     private static func run(_ command: Command) async throws {
-        guard #available(macOS 15.0, *) else { throw MainError.needsMacOS15 }
+        guard #available(macOS 15.0, *) else { throw MainError.needsMacOS }
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 26,
+            ProcessInfo.processInfo.environment["MAC_STT_FORCE"] != "1"
+        {
+            throw MainError.needsMacOS
+        }
         switch command {
         case .help:
             print(usage)
@@ -121,12 +126,12 @@ struct MacSTTMain {
 
 private enum MainError: Error, LocalizedError {
     case oneOutputForMultipleInputs
-    case needsMacOS15
+    case needsMacOS
 
     var errorDescription: String? {
         switch self {
         case .oneOutputForMultipleInputs: "--output accepts one input; omit it for a combined multi-file result"
-        case .needsMacOS15: "macOS 15 or newer is required (Core ML model state)"
+        case .needsMacOS: "macOS 26 or newer is required (the Core ML decoder did not load on macOS 15.8 in testing); set MAC_STT_FORCE=1 to try anyway"
         }
     }
 }

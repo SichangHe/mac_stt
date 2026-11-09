@@ -1,0 +1,37 @@
+name: install-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: release tag, or empty for latest
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      # no checkout: the point is to test what a user gets from the public URL
+      - name: one-script install
+        env:
+          MAC_STT_VERSION: ${{ inputs.version }}
+        run: |
+          start=$(date +%s)
+          curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh | sh
+          echo "install wall time: $(( $(date +%s) - start )) s"
+      - name: use the installed binary
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          mac-stt doctor
+          mkdir work && cd work
+          curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/tests/data/librispeech-dev-clean-240s.wav -o speech.wav
+          curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/tests/data/librispeech-dev-clean-240s.tsv -o speech.tsv
+          curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/scripts/wavtool.py -o wavtool.py
+          python3 -I wavtool.py prefix speech.wav speech.tsv 30 in30.wav ref30.txt
+          mac-stt transcribe in30.wav --no-clipboard > out30.txt
+          cat out30.txt
+          echo "WER: $(python3 -I wavtool.py wer ref30.txt out30.txt) %"
