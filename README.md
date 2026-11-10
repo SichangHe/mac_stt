@@ -41,7 +41,7 @@ Common options: `--diarize` (speaker labels), `--no-clipboard`, `-o FILE`, `--la
 ## requirements
 
 - Apple Silicon Mac, macOS 26 or newer. On a hosted macOS 15.8 runner the decoder's first Core ML compile did not finish in 7 minutes under any compute policy, so macOS 15 is blocked (`MAC_STT_FORCE=1` overrides). On macOS 26.7 it loaded in seconds.
-- About 3 GB of disk for models in `~/Library/Application Support/mac-stt/models`.
+- About 3 GB of disk for models, stored in the standard Hugging Face hub cache so other apps can share them: `$HF_HUB_CACHE`, else `$HF_HOME/hub`, else `~/.cache/huggingface/hub`, as `models--raymondchins--qwen3-asr-<size>-coreml/{blobs,snapshots/<commit>,refs}`. An existing copy of the pinned commit is reused; missing or mismatched files are fetched and SHA-256 checked. (FluidAudio's diarizer models, used only with `--diarize`, are stored by FluidAudio itself.)
 
 ## measured results
 
@@ -55,3 +55,7 @@ scripts/e2e out-dir     # end-to-end run on Apple Silicon macOS (downloads model
 ```
 
 Code is in `Sources/MacSTTCore` (`Qwen3/` holds the model pipeline). Third-party provenance: [docs/provenance.md](docs/provenance.md).
+
+## license
+
+[UPL-1.0](LICENSE). The models have their own licenses; see [docs/provenance.md](docs/provenance.md).

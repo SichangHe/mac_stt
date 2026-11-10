@@ -23,6 +23,19 @@ jobs:
           start=$(date +%s)
           curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh | sh
           echo "install wall time: $(( $(date +%s) - start )) s"
+      - name: models are in the Hugging Face cache
+        run: |
+          ls -l ~/.cache/huggingface/hub/*/snapshots/* | head -40
+          du -shL ~/.cache/huggingface/hub/models--*
+      - name: second install reuses the cache
+        env:
+          MAC_STT_VERSION: ${{ inputs.version }}
+        run: |
+          start=$(date +%s)
+          curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh | sh 2>&1 | tee second.log
+          echo "second install wall time: $(( $(date +%s) - start )) s"
+          grep -q 'using cached Qwen3-ASR' second.log
+          ! grep -q 'downloading Qwen3-ASR' second.log
       - name: use the installed binary
         run: |
           export PATH="$HOME/.local/bin:$PATH"
