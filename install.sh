@@ -10,7 +10,8 @@ prefix=${MAC_STT_PREFIX:-$HOME/.local}
 asset=mac-stt-macos-arm64.tar.gz
 
 [ "$(uname -s)" = Darwin ] || { echo "mac-stt runs on macOS only" >&2; exit 1; }
-[ "$(uname -m)" = arm64 ] || { echo "mac-stt needs an Apple Silicon Mac" >&2; exit 1; }
+# `uname -m` says x86_64 when the shell runs under Rosetta, so ask the hardware instead.
+[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || { echo "mac-stt needs an Apple Silicon Mac (uname -m: $(uname -m))" >&2; exit 1; }
 major=$(sw_vers -productVersion | cut -d. -f1)
 # On a hosted macOS 15.8 runner the Core ML decoder compile did not finish in 7 minutes; macOS 26 loads in seconds.
 if [ "$major" -lt 26 ] && [ "${MAC_STT_FORCE:-}" != 1 ]; then
