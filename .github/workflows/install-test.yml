@@ -16,6 +16,11 @@ jobs:
     timeout-minutes: 45
     steps:
       # no checkout: the point is to test what a user gets from the public URL
+      - name: installer accepts a Rosetta (x86_64) shell on Apple Silicon
+        run: |
+          arch -x86_64 /bin/sh -c 'echo "uname -m under Rosetta: $(uname -m)"'
+          curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh -o /tmp/install.sh
+          MAC_STT_SKIP_SETUP=1 arch -x86_64 /bin/sh /tmp/install.sh
       - name: one-script install
         env:
           MAC_STT_VERSION: ${{ inputs.version }}
