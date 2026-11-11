@@ -19,8 +19,17 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
-      - name: run
-        run: ${{ inputs.script }} e2e-out
+      - name: run, sampling GPU activity
+        run: |
+          mkdir -p e2e-out
+          sudo powermetrics --samplers gpu_power -i 2000 >e2e-out/powermetrics.txt 2>&1 &
+          ${{ inputs.script }} e2e-out
+          sudo pkill powermetrics || true
+          sw_vers
+          grep -m3 'mlx device' e2e-out/*.err || true
+          echo "GPU active residency samples above 10%:"
+          grep 'GPU HW active residency' e2e-out/powermetrics.txt | awk '$5+0 > 10' | sort -t: -k2 -rn | head -5
+          grep -c 'GPU HW active residency' e2e-out/powermetrics.txt
       - name: retain
         if: always()
         uses: actions/upload-artifact@v4

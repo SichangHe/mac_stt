@@ -8,7 +8,7 @@ On-device speech-to-text for Apple Silicon. Bind one command to a key: press onc
 curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh | sh
 ```
 
-The script downloads the latest release, checks its SHA-256, installs `~/.local/bin/mac-stt`, then downloads and verifies the models (about 2.7 GB) and warms Core ML's cache. It needs an Apple Silicon Mac on macOS 26 or newer and no `sudo`. See [requirements](#requirements).
+The script downloads the latest release, checks its SHA-256, installs `~/.local/bin/mac-stt`, then downloads and verifies the models (about 2.7 GB) and warms Core ML's cache. It needs an Apple Silicon Mac on macOS 14 or newer and no `sudo`. See [requirements](#requirements).
 
 ## use
 
@@ -40,7 +40,10 @@ Common options: `--diarize` (speaker labels), `--no-clipboard`, `-o FILE`, `--la
 
 ## requirements
 
-- Apple Silicon Mac, macOS 26 or newer. On a hosted macOS 15.8 runner the decoder's first Core ML compile did not finish in 7 minutes under any compute policy, so macOS 15 is blocked (`MAC_STT_FORCE=1` overrides). On macOS 26.7 it loaded in seconds.
+- Apple Silicon Mac, macOS 14 or newer. The engine depends on the macOS version (`MAC_STT_BACKEND=coreml|mlx` overrides):
+  - macOS 26 or newer: Core ML (`raymondchins/qwen3-asr-*-coreml`). On macOS 26.7 it loaded in seconds.
+  - macOS 14 and 15: MLX on the GPU (`mlx-community/Qwen3-ASR-*-8bit`). Core ML's stateful decoder needs macOS 15, and on a hosted macOS 15.8 runner its first compile did not finish in 7 minutes.
+  - macOS 14 is untested on real hardware: GitHub has no hosted macOS 14 Apple Silicon runners. The MLX path was tested on hosted macOS 15 runners, and the binary's minimum OS is 14.0.
 - About 3 GB of disk for models, stored in the standard Hugging Face hub cache so other apps can share them: `$HF_HUB_CACHE`, else `$HF_HOME/hub`, else `~/.cache/huggingface/hub`, as `models--raymondchins--qwen3-asr-<size>-coreml/{blobs,snapshots/<commit>,refs}`. An existing copy of the pinned commit is reused; missing or mismatched files are fetched and SHA-256 checked. (FluidAudio's diarizer models, used only with `--diarize`, are stored by FluidAudio itself.)
 
 ## measured results

@@ -13,11 +13,15 @@ asset=mac-stt-macos-arm64.tar.gz
 # `uname -m` says x86_64 when the shell runs under Rosetta, so ask the hardware instead.
 [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || { echo "mac-stt needs an Apple Silicon Mac (uname -m: $(uname -m))" >&2; exit 1; }
 major=$(sw_vers -productVersion | cut -d. -f1)
-# On a hosted macOS 15.8 runner the Core ML decoder compile did not finish in 7 minutes; macOS 26 loads in seconds.
-if [ "$major" -lt 26 ] && [ "${MAC_STT_FORCE:-}" != 1 ]; then
-    echo "mac-stt needs macOS 26 or newer (found $(sw_vers -productVersion)); set MAC_STT_FORCE=1 to try anyway" >&2
+# 🧑 "Support my version. I'm not upgrading" (macOS 14.4) ... "Also need to be accelerated"
+# Core ML's stateful decoder needs macOS 15 and did not compile in 7 minutes on a hosted macOS 15.8 runner,
+# so macOS 14 and 15 use MLX on the GPU; macOS 26 uses Core ML. `mac-stt` picks the same way at run time.
+if [ "$major" -lt 14 ] && [ "${MAC_STT_FORCE:-}" != 1 ]; then
+    echo "mac-stt needs macOS 14 or newer (found $(sw_vers -productVersion)); set MAC_STT_FORCE=1 to try anyway" >&2
     exit 1
 fi
+if [ "$major" -ge 26 ]; then engine=coreml; else engine=mlx; fi
+echo "macOS $(sw_vers -productVersion): using the $engine engine"
 
 if [ -n "${MAC_STT_VERSION:-}" ]; then
     base=https://github.com/$repo/releases/download/$MAC_STT_VERSION
@@ -35,10 +39,11 @@ tar -xzf "$work/$asset" -C "$work"
 
 mkdir -p "$prefix/bin"
 install -m 755 "$work/mac-stt" "$prefix/bin/mac-stt"
+install -m 644 "$work/mlx.metallib" "$prefix/bin/mlx.metallib"
 echo "installed $prefix/bin/mac-stt"
 
 if [ "${MAC_STT_SKIP_SETUP:-}" != 1 ]; then
-    "$prefix/bin/mac-stt" setup
+    MAC_STT_BACKEND=$engine "$prefix/bin/mac-stt" setup
 fi
 
 case ":$PATH:" in
