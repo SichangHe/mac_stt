@@ -8,6 +8,10 @@ struct MacSTTMain {
         do {
             let command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
             try await run(command)
+            // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
+            // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
+            fflush(stdout)
+            _exit(0)
         } catch {
             FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
             FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
