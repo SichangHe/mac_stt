@@ -16,3 +16,19 @@ jobs:
       - run: scripts/build dist
       - run: |
           ls -l dist; otool -l dist/mac-stt | grep -A3 LC_BUILD_VERSION; dist/mac-stt doctor
+      - uses: actions/upload-artifact@v4
+        with: {name: dist, path: "dist/mac-stt\ndist/mlx.metallib"}
+  # GitHub no longer hosts macOS 14 runners; macOS 15 exercises the same pre-26 MLX path.
+  e2e-older-macos:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with: {lfs: true}
+      - uses: actions/download-artifact@v4
+        with: {name: dist, path: dist}
+      - run: chmod +x dist/mac-stt && scripts/e2e out dist/mac-stt
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: e2e-macos-15, path: out}
