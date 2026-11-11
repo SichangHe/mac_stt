@@ -4,7 +4,7 @@
 set -eu
 out=$1
 mkdir -p "$out"
-bin=${2:-.build/release/mac-stt}
+bin=${2:-dist/mac-stt}
 data=tests/data
 speech=$data/librispeech-dev-clean-240s
 export MAC_STT_TRACE=1
@@ -17,7 +17,7 @@ note() { printf '%s\n' "$*" | tee -a "$out/summary.txt"; }
 { sw_vers; sysctl -n machdep.cpu.brand_string; sysctl -n hw.memsize; } >"$out/system.txt"
 cat "$out/system.txt" | tee -a "$out/summary.txt" >/dev/null
 
-if [ -z "${2:-}" ]; then swift build -c release >"$out/build.log" 2>&1; fi
+if [ -z "${2:-}" ]; then scripts/build dist; fi
 "$bin" doctor >"$out/doctor.txt" 2>&1 || true
 
 # setup: download, verify, warm

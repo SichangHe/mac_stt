@@ -1,0 +1,18 @@
+name: build
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        default: macos-26
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - run: sw_vers; xcodebuild -version; swift --version
+      - run: scripts/build dist
+      - run: |
+          ls -l dist; otool -l dist/mac-stt | grep -A3 LC_BUILD_VERSION; dist/mac-stt doctor

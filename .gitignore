@@ -3,3 +3,5 @@
 Package.resolved
 *.xcworkspace/
 .DS_Store
+.xcbuild/
+dist/

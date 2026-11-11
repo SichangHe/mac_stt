@@ -39,7 +39,7 @@ struct Qwen3Config: Decodable, Sendable {
 /// Qwen3-ASR on Core ML: encoder on the Neural Engine, int8 decoder with Core ML state on the GPU.
 /// The actor serializes use of the single shared KV-cache state.
 @available(macOS 15.0, *)
-public actor Qwen3Engine {
+public actor CoreMLEngine: Qwen3Engine {
     private static let masked: Float16 = -1e4
     private static let trace = ProcessInfo.processInfo.environment["MAC_STT_TRACE"] == "1"
     private let config: Qwen3Config
@@ -53,10 +53,10 @@ public actor Qwen3Engine {
     private let scales: [Float]
     private let invFrequency: [Double]
 
-    public static func load(variant: Qwen3Variant = .large, compute: ComputePolicy = .ane) async throws -> Qwen3Engine {
+    public static func load(variant: Qwen3Variant = .large, compute: ComputePolicy = .ane) async throws -> CoreMLEngine {
         try Hardware.requireAppleSilicon()
         let root = try await Qwen3Assets.ensure(variant)
-        return try Qwen3Engine(root: root, compute: compute)
+        return try CoreMLEngine(root: root, compute: compute)
     }
 
     private init(root: URL, compute: ComputePolicy) throws {
@@ -95,8 +95,6 @@ public actor Qwen3Engine {
         state = prefill.makeState()
         invFrequency = (0..<64).map { pow(1_000_000.0, -Double($0) / 64.0) }
     }
-
-    public nonisolated static let sampleRate = 16_000
 
     /// Transcribes up to about 30 seconds of 16 kHz mono audio.
     public func transcribe(_ samples: [Float], language: String? = nil) throws -> String {

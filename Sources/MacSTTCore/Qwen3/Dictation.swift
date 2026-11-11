@@ -17,9 +17,8 @@ public struct DictationResult: Sendable {
 
 /// One dictation take: capture, 16 kHz conversion, streaming transcription, optional diarization.
 /// The capture consumer only copies audio, so recording is never blocked by inference.
-@available(macOS 15.0, *)
 public final class DictationTake: @unchecked Sendable {
-    private let engine: Task<Qwen3Engine, Error>
+    private let engine: Task<any Qwen3Engine, Error>
     private let session: Qwen3Session
     private let capture: MicrophoneCapture?
     private let consumer: Task<Void, Error>
@@ -28,7 +27,7 @@ public final class DictationTake: @unchecked Sendable {
 
     public init(
         input: AudioInput,
-        engine: Task<Qwen3Engine, Error>,
+        engine: Task<any Qwen3Engine, Error>,
         diarizer: Task<DiarizerModels, Error>?,
         language: String?,
         onPartial: (@Sendable (String) -> Void)?
@@ -95,10 +94,14 @@ public final class DictationTake: @unchecked Sendable {
     }
 }
 
-@available(macOS 15.0, *)
 public enum Qwen3Runtime {
-    public static func engineTask(variant: Qwen3Variant, compute: ComputePolicy) -> Task<Qwen3Engine, Error> {
-        Task.detached(priority: .userInitiated) { try await Qwen3Engine.load(variant: variant, compute: compute) }
+    public static func engineTask(variant: Qwen3Variant, compute: ComputePolicy) -> Task<any Qwen3Engine, Error> {
+        Task.detached(priority: .userInitiated) {
+            if Qwen3Backend.current == .coreml, #available(macOS 15.0, *) {
+                return try await CoreMLEngine.load(variant: variant, compute: compute)
+            }
+            return try await MLXEngine.load(variant: variant)
+        }
     }
 
     public static func diarizerTask(compute: ComputePolicy) -> Task<DiarizerModels, Error> {
@@ -111,7 +114,7 @@ public enum Qwen3Runtime {
 
     /// Offline path for files: the same segmenter, run as fast as the model allows.
     public static func transcribeFile(
-        path: String, engineTask: Task<Qwen3Engine, Error>,
+        path: String, engineTask: Task<any Qwen3Engine, Error>,
         diarizer: DiarizerModels?, language: String?
     ) async throws -> TranscriptDocument {
         let engine = try await engineTask.value

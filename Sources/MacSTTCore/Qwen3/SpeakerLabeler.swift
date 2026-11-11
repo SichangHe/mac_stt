@@ -2,7 +2,6 @@ import Foundation
 
 /// Assigns speakers to Qwen3 segments. Segments that contain one speaker are labeled directly;
 /// a segment that contains a speaker change is re-transcribed per speaker turn.
-@available(macOS 15.0, *)
 public enum SpeakerLabeler {
     private struct Piece {
         var speaker: String
@@ -14,7 +13,7 @@ public enum SpeakerLabeler {
         segments: [SpeechSegment],
         spans: [SpeakerSpan],
         audio: [Float],
-        engine: Qwen3Engine,
+        engine: any Qwen3Engine,
         language: String?
     ) async throws -> TranscriptDocument {
         var lines: [TranscriptLine] = []

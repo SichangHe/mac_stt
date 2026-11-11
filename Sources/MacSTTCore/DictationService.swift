@@ -3,10 +3,9 @@ import Foundation
 
 /// State machine behind `mac-stt serve`. Starting a take never waits for an earlier take's
 /// transcription: `stop` clears the active take before it awaits any model work.
-@available(macOS 15.0, *)
 public actor DictationService {
     private let options: ServeOptions
-    private let engine: Task<Qwen3Engine, Error>
+    private let engine: Task<any Qwen3Engine, Error>
     private let diarizer: Task<DiarizerModels, Error>?
     private var take: DictationTake?
 

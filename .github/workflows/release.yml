@@ -15,14 +15,12 @@ jobs:
       - uses: actions/checkout@v5
       - name: build
         run: |
-          swift build -c release
-          mkdir dist
-          cp .build/release/mac-stt dist/mac-stt
+          scripts/build dist
           strip dist/mac-stt
           codesign --force --sign - dist/mac-stt
           dist/mac-stt help >/dev/null
           lipo -info dist/mac-stt
-          tar -czf mac-stt-macos-arm64.tar.gz -C dist mac-stt
+          tar -czf mac-stt-macos-arm64.tar.gz -C dist mac-stt mlx.metallib
           shasum -a 256 mac-stt-macos-arm64.tar.gz > mac-stt-macos-arm64.tar.gz.sha256
       - name: publish
         env:

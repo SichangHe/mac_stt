@@ -4,7 +4,7 @@
 set -eu
 out=$1
 mkdir -p "$out"
-bin=${2:-.build/release/mac-stt}
+bin=${2:-dist/mac-stt}
 speech=tests/data/librispeech-dev-clean-240s
 export MAC_STT_TRACE=1
 limit() { perl -e 'alarm shift; exec @ARGV' "$@"; }
@@ -12,7 +12,7 @@ collect() { cp "$HOME/Library/Application Support/mac-stt/serve.log" "$out/serve
 trap collect EXIT
 note() { printf '%s\n' "$*" | tee -a "$out/summary.txt"; }
 now() { python3 -I -c 'import time;print(time.time())'; }
-[ -n "${2:-}" ] || swift build -c release >"$out/build.log" 2>&1
+[ -n "${2:-}" ] || scripts/build dist
 limit 1200 "$bin" setup >"$out/setup.txt" 2>&1
 note "setup: $(tail -1 "$out/setup.txt")"
 

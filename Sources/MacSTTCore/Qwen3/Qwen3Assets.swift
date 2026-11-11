@@ -1,17 +1,25 @@
 import CryptoKit
 import Foundation
 
-/// Core ML conversion of Alibaba's Qwen3-ASR (Apache-2.0) by Raymond Chin, pinned by commit.
+/// Alibaba's Qwen3-ASR (Apache-2.0): a Core ML conversion by Raymond Chin, or the MLX 8-bit conversion by mlx-community, pinned by commit.
 public enum Qwen3Variant: String, CaseIterable, Sendable {
     case large = "1.7b"
     case small = "0.6b"
 
-    var repo: String { "raymondchins/qwen3-asr-\(rawValue)-coreml" }
+    /// Model repository and pinned commit for the active backend.
+    var repo: String {
+        switch Qwen3Backend.current {
+        case .coreml: "raymondchins/qwen3-asr-\(rawValue)-coreml"
+        case .mlx: "mlx-community/Qwen3-ASR-\(rawValue.uppercased())-8bit"
+        }
+    }
 
     var revision: String {
-        switch self {
-        case .large: "09e2ce5602d570e9ffc97e45fb0d9c6dad33bafa"
-        case .small: "d77134842e78a651cc01ab50bd8b39c2549f1737"
+        switch (Qwen3Backend.current, self) {
+        case (.coreml, .large): "09e2ce5602d570e9ffc97e45fb0d9c6dad33bafa"
+        case (.coreml, .small): "d77134842e78a651cc01ab50bd8b39c2549f1737"
+        case (.mlx, .large): "a8379a2e2f9e313c9292cdf1af4055ab56d50d55"
+        case (.mlx, .small): "89e96d92ba34aca20b3e29fb10cc284097d1219f"
         }
     }
 }

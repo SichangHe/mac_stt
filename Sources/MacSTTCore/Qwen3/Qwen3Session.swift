@@ -11,14 +11,13 @@ public struct SpeechSegment: Sendable, Equatable {
 /// Streaming front end. `append` never waits on inference: it only copies samples and starts
 /// background work. Audio is committed as a segment at a pause (after 8 s) or by 30 s, so the
 /// work left when recording stops is bounded by one segment regardless of total length.
-@available(macOS 15.0, *)
 public final class Qwen3Session: @unchecked Sendable {
     private static let rate = 16_000
     private static let maxSegment = 30 * rate
     private static let pauseMinimum = 8 * rate
     private static let partialInterval: TimeInterval = 1.5
 
-    private let engine: Task<Qwen3Engine, Error>
+    private let engine: Task<any Qwen3Engine, Error>
     private let language: String?
     private let keepAudio: Bool
     private let onPartial: (@Sendable (String) -> Void)?
@@ -35,7 +34,7 @@ public final class Qwen3Session: @unchecked Sendable {
     private var total = 0
 
     public init(
-        engine: Task<Qwen3Engine, Error>, language: String?, keepAudio: Bool,
+        engine: Task<any Qwen3Engine, Error>, language: String?, keepAudio: Bool,
         onPartial: (@Sendable (String) -> Void)? = nil
     ) {
         self.engine = engine
