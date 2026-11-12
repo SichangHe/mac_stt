@@ -53,6 +53,8 @@ public final class MenuBarApp: NSObject {
         instance = me
         me.setUp()
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptPrompt": true] as CFDictionary)
+        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in LogPrune.trimAll() }
+        LogPrune.trimAll()
         app.run()
         exit(0)
     }

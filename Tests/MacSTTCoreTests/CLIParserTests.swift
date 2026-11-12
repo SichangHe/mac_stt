@@ -64,3 +64,17 @@ final class AppParserTests: XCTestCase {
         }
     }
 }
+
+final class LogPruneTests: XCTestCase {
+    func testTrimKeepsNewestLinesUnderCap() throws {
+        let path = NSTemporaryDirectory() + "prune-\(UUID().uuidString).log"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let lines = (0..<1000).map { "line \($0)\n" }.joined()
+        try lines.write(toFile: path, atomically: true, encoding: .utf8)
+        LogPrune.trim(path, maxBytes: 2000)
+        let kept = try String(contentsOfFile: path, encoding: .utf8)
+        XCTAssertLessThanOrEqual(kept.utf8.count, 1000)
+        XCTAssertTrue(kept.hasSuffix("line 999\n"))
+        XCTAssertTrue(kept.hasPrefix("line "))
+    }
+}

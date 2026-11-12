@@ -29,6 +29,7 @@ public actor DictationService {
         Task.detached { [self] in
             while true {
                 try? await Task.sleep(for: .seconds(30))
+                LogPrune.trimAll()
                 await self.exitIfIdle()
             }
         }

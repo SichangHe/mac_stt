@@ -65,6 +65,7 @@ public enum Report {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let path = ControlSocket.directory.appendingPathComponent("report-\(stamp).txt").path
+        LogPrune.trimAll()
         try build().write(toFile: path, atomically: true, encoding: .utf8)
         let title = "Problem report"
         let body = "What happened:\n\n\nWhat I expected:\n\n\n(Attach the report file: \(path))\n"
