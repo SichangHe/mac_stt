@@ -91,7 +91,12 @@ public enum ControlClient {
     /// Runs this executable with `arguments` detached (own session, own TCC identity), output appended to `logPath`.
     public static func spawnDetached(arguments: [String], logPath: String) throws {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: logPath, contents: nil)
+        // Keep history across runs; rotate once a log passes 1 MB.
+        if let size = (try? FileManager.default.attributesOfItem(atPath: logPath))?[.size] as? Int, size > 1_000_000 {
+            try? FileManager.default.removeItem(atPath: logPath + ".old")
+            try? FileManager.default.moveItem(atPath: logPath, toPath: logPath + ".old")
+        }
+        if !FileManager.default.fileExists(atPath: logPath) { FileManager.default.createFile(atPath: logPath, contents: nil) }
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)

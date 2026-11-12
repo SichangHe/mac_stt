@@ -20,6 +20,8 @@ Install with this script. The binary is not notarized (no Apple developer accoun
 2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
 3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.
 
+Problems: `mac-stt report` saves recent `serve`/`app` logs (kept in `~/Library/Application Support/mac-stt/`), macOS and hardware details and permission states into one text file, then opens a prefilled GitHub issue; drag the file in and submit. Nothing is uploaded automatically, and dictated partial text is redacted from the log copy.
+
 Other commands:
 
 ```sh

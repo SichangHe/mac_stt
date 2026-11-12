@@ -73,6 +73,8 @@ struct MacSTTMain {
             try await Task.sleep(for: .seconds(Double(Int32.max)))
         case .control(let verb):
             print(try await ControlClient.send(verb))
+        case .report:
+            print(try Report.write())
         case .app:
             break  // handled in main()
         case .appInstall(let hotkey):

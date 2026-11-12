@@ -63,6 +63,7 @@ public enum ControlVerb: String, CaseIterable, Sendable {
 public enum Command: Equatable, Sendable {
     case help
     case doctor
+    case report
     case setup(ModelOptions)
     case serve(ServeOptions)
     case control(ControlVerb)
@@ -102,6 +103,9 @@ public enum CLIParser {
         let rest = Array(arguments.dropFirst())
         switch name {
         case "help", "--help", "-h": return .help
+        case "report":
+            guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
+            return .report
         case "doctor":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .doctor
@@ -255,6 +259,8 @@ usage:
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
   mac-stt doctor
+  mac-stt report                        save logs + system info to one file and open a prefilled GitHub issue
+                                        (nothing is uploaded; background logs: ~/Library/Application Support/mac-stt/)
 
 options: --model 1.7b|0.6b  --language CODE (default: detect)  --compute ane|gpu|cpu|all
          --no-clipboard  -o PATH  --input-speed N (record --input pacing, default 1)
