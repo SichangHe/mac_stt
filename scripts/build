@@ -6,6 +6,24 @@ set -eu
 dist=$1
 mkdir -p "$dist"
 xcodebuild -downloadComponent MetalToolchain >/dev/null 2>&1 || true
+# MLX compiles some kernels at run time. macOS 14 only has Metal 3.1, which lacks metal::remove_addrspace_t,
+# so rewrite that use into a form 3.1 accepts (decltype of a prvalue carries no address space).
+xcodebuild -resolvePackageDependencies -scheme mac-stt -derivedDataPath .xcbuild >"$dist/resolve.log" 2>&1 ||
+    { tail -n 40 "$dist/resolve.log"; exit 1; }
+cmlx=.xcbuild/SourcePackages/checkouts/mlx-swift/Source/Cmlx
+files=$(grep -rl 'remove_addrspace_t<decltype(res)>' "$cmlx" || true)
+[ -n "$files" ] || grep -rq 'using res_t = decltype(tv __op__ uv)' "$cmlx" || { echo "MLX Metal 3.1 patch target not found" >&2; exit 1; }
+for f in $files; do
+    chmod u+w "$f"
+    perl -pi -e 's/metal::remove_addrspace_t<decltype\(res\)>/decltype(tv __op__ uv)/' "$f"
+done
+# MAC_STT_METAL_3_1=1 makes MLX compile run-time kernels as Metal 3.1 on newer macOS, reproducing macOS 14 in CI.
+dev=$cmlx/mlx/mlx/backend/metal/device.cpp
+if ! grep -q MAC_STT_METAL_3_1 "$dev"; then
+    chmod u+w "$dev"
+    perl -0pi -e 's/(auto get_metal_version_ = \[\]\(\) \{\n)/$1    if (std::getenv("MAC_STT_METAL_3_1")) {\n      return MTL::LanguageVersion3_1;\n    }\n/' "$dev"
+    grep -q MAC_STT_METAL_3_1 "$dev" || { echo "MLX device.cpp patch target not found" >&2; exit 1; }
+fi
 xcodebuild build -scheme mac-stt -configuration Release -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath .xcbuild -skipPackagePluginValidation -skipMacroValidation >"$dist/build.log" 2>&1 ||
     { tail -n 80 "$dist/build.log"; exit 1; }
