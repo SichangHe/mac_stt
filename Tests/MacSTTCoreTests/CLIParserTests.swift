@@ -66,15 +66,19 @@ final class AppParserTests: XCTestCase {
 }
 
 final class LogPruneTests: XCTestCase {
-    func testTrimKeepsNewestLinesUnderCap() throws {
+    func testRotatesAndDropsOld() throws {
         let path = NSTemporaryDirectory() + "prune-\(UUID().uuidString).log"
-        defer { try? FileManager.default.removeItem(atPath: path) }
-        let lines = (0..<1000).map { "line \($0)\n" }.joined()
-        try lines.write(toFile: path, atomically: true, encoding: .utf8)
-        LogPrune.trim(path, maxBytes: 2000)
+        defer { for s in ["", ".1", ".tmp"] { try? FileManager.default.removeItem(atPath: path + s) } }
+        for i in 0..<200 { LogPrune.append("line \(i)", to: path, maxBytes: 1000) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: path + ".1"))
+        let size = (try FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
+        XCTAssertLessThanOrEqual(size, 1100)
+        let old = "[2000-01-01T00:00:00Z] ancient\ncontinuation\n[\(ISO8601DateFormatter().string(from: Date()))] fresh\n"
+        try old.write(toFile: path, atomically: true, encoding: .utf8)
+        LogPrune.dropOld(path)
         let kept = try String(contentsOfFile: path, encoding: .utf8)
-        XCTAssertLessThanOrEqual(kept.utf8.count, 1000)
-        XCTAssertTrue(kept.hasSuffix("line 999\n"))
-        XCTAssertTrue(kept.hasPrefix("line "))
+        XCTAssertFalse(kept.contains("ancient"))
+        XCTAssertFalse(kept.contains("continuation"))
+        XCTAssertTrue(kept.contains("fresh"))
     }
 }

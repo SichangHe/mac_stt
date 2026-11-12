@@ -27,9 +27,13 @@ public actor DictationService {
             }
         }
         Task.detached { [self] in
+            var lastPrune = Date.distantPast
             while true {
                 try? await Task.sleep(for: .seconds(30))
-                LogPrune.trimAll()
+                if Date().timeIntervalSince(lastPrune) >= 3600 {
+                    LogPrune.pruneAll()
+                    lastPrune = Date()
+                }
                 await self.exitIfIdle()
             }
         }
@@ -42,7 +46,7 @@ public actor DictationService {
     }
 
     static func log(_ message: String) {
-        FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
+        LogPrune.append(message, to: ControlSocket.logPath)
     }
 
     public func handle(_ verb: ControlVerb) async -> String {

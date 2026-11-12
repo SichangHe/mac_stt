@@ -20,7 +20,7 @@ Install with this script. The binary is not notarized (no Apple developer accoun
 2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
 3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.
 
-Problems: `mac-stt report` saves recent `serve`/`app` logs (kept in `~/Library/Application Support/mac-stt/`), macOS and hardware details and permission states into one text file, then opens a prefilled GitHub issue; drag the file in and submit. Logs prune themselves: each is capped at 1 MB (cut to its newest half; see `LogPrune.swift`) and only the newest 5 reports are kept. Nothing is uploaded automatically, and dictated partial text is redacted from the log copy.
+Problems: `mac-stt report` saves recent `serve`/`app` logs (kept in `~/Library/Application Support/mac-stt/`), macOS and hardware details and permission states into one text file, then opens a prefilled GitHub issue; drag the file in and submit. Logs prune themselves: each log rotates to `.1` past 2 MiB (at most 2 files per log), entries older than 14 days are dropped hourly, and only the newest 5 reports are kept; limits are constants in `LogPrune.swift`. Nothing is uploaded automatically, and dictated partial text is redacted from the log copy.
 
 Other commands:
 

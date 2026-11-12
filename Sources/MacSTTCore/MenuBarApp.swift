@@ -18,7 +18,7 @@ public final class MenuBarApp: NSObject {
     }
 
     static func log(_ message: String) {
-        FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
+        LogPrune.append(message, to: ControlSocket.appLogPath)
     }
 
     /// Holds an exclusive lock for the life of the process; returns false if another app already has it.
@@ -53,8 +53,8 @@ public final class MenuBarApp: NSObject {
         instance = me
         me.setUp()
         _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptPrompt": true] as CFDictionary)
-        Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in LogPrune.trimAll() }
-        LogPrune.trimAll()
+        Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in LogPrune.pruneAll() }
+        LogPrune.pruneAll()
         app.run()
         exit(0)
     }

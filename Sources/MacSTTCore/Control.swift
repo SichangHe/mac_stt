@@ -91,7 +91,6 @@ public enum ControlClient {
     /// Runs this executable with `arguments` detached (own session, own TCC identity), output appended to `logPath`.
     public static func spawnDetached(arguments: [String], logPath: String) throws {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
-        LogPrune.trim(logPath)  // keep history across runs, bounded
         if !FileManager.default.fileExists(atPath: logPath) { FileManager.default.createFile(atPath: logPath, contents: nil) }
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         var actions: posix_spawn_file_actions_t?

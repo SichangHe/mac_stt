@@ -1,29 +1,59 @@
 import Foundation
 
-/// Bounds disk use of the background logs. Each log may grow to `maxBytes`; past that it is cut in place
-/// to its newest half (the writer keeps its O_APPEND descriptor), so total use stays near 2 * maxBytes.
+/// Background-process logs: timestamped lines, size rotation on append, age pruning hourly.
+/// Total use is bounded: per log at most 2 files (`x.log`, `x.log.1`) of about `maxBytes` each.
 public enum LogPrune {
-    /// Adjust here: cap per log file, and how many `report-*.txt` files to keep.
-    public static let maxBytes = 1_000_000
+    /// Adjust here.
+    public static let maxBytes = 2 * 1024 * 1024
+    public static let maxAge: TimeInterval = 14 * 24 * 3600
     public static let reportsKept = 5
 
-    public static func trim(_ path: String, maxBytes: Int = LogPrune.maxBytes) {
-        guard let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? Int, size > maxBytes,
-            let handle = FileHandle(forUpdatingAtPath: path)
-        else { return }
-        defer { try? handle.close() }
-        do {
-            try handle.seek(toOffset: UInt64(size - maxBytes / 2))
-            var tail = try handle.readToEnd() ?? Data()
-            if let newline = tail.firstIndex(of: 10) { tail = tail.suffix(from: tail.index(after: newline)) }
-            try handle.truncate(atOffset: 0)
-            try handle.write(contentsOf: tail)
-        } catch {}
+    /// Appends one timestamped line; renames to `.1` (replacing the old one) when over the size limit.
+    /// Opens the file on every write so rotation never strands a writer on the renamed file.
+    public static func append(_ message: String, to path: String, maxBytes: Int = LogPrune.maxBytes) {
+        let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+        let fm = FileManager.default
+        if let size = (try? fm.attributesOfItem(atPath: path))?[.size] as? Int, size > maxBytes {
+            try? fm.removeItem(atPath: path + ".1")
+            try? fm.moveItem(atPath: path, toPath: path + ".1")
+        }
+        let fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        _ = Array(line.utf8).withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
     }
 
-    public static func trimAll() {
-        trim(ControlSocket.logPath)
-        trim(ControlSocket.appLogPath)
+    /// Drops lines older than `maxAge` (lines without a leading `[ISO time]` follow the line above them),
+    /// writing a temp file and renaming it over the log. Failure only logs; it never throws.
+    public static func dropOld(_ path: String, now: Date = Date(), maxAge: TimeInterval = LogPrune.maxAge) {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return }
+        let formatter = ISO8601DateFormatter()
+        var keep = true
+        var kept: [Substring] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("["), let end = line.firstIndex(of: "]"),
+                let time = formatter.date(from: String(line[line.index(after: line.startIndex)..<end]))
+            {
+                keep = now.timeIntervalSince(time) <= maxAge
+            }
+            if keep { kept.append(line) }
+        }
+        let result = kept.joined(separator: "\n")
+        guard result != text else { return }
+        let temp = path + ".tmp"
+        do {
+            try result.write(toFile: temp, atomically: false, encoding: .utf8)
+            _ = rename(temp, path)
+        } catch {
+            append("log pruning failed: \(error.localizedDescription)", to: path)
+        }
+    }
+
+    public static func pruneAll() {
+        for path in [ControlSocket.logPath, ControlSocket.appLogPath] {
+            dropOld(path)
+            dropOld(path + ".1")
+        }
         let dir = ControlSocket.directory
         let reports = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
             .filter { $0.hasPrefix("report-") && $0.hasSuffix(".txt") }.sorted()
