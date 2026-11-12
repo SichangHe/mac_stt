@@ -215,7 +215,9 @@ usage:
   mac-stt setup [--model 1.7b|0.6b]      download and verify models, warm the Neural Engine cache
   mac-stt serve [--diarize] [--no-clipboard]   keep models warm and wait for toggle commands
   mac-stt toggle                        start recording; run again to stop, transcribe, and copy
-  mac-stt start | stop | status | quit  other control verbs for a running `serve`
+  mac-stt start | stop                  start or stop recording explicitly
+  mac-stt status                        report whether `serve` is idle or recording
+  mac-stt quit                          exit the background `serve` (it also exits after 10 min idle)
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
