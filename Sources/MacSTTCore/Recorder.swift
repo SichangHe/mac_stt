@@ -59,12 +59,14 @@ public enum MicrophonePermission {
             return
         case .notDetermined:
             guard await AVCaptureDevice.requestAccess(for: .audio) else {
-                throw RecorderError.microphonePermissionDenied
+                throw RecorderError.microphonePermissionDenied("the permission request was refused")
             }
-        case .denied, .restricted:
-            throw RecorderError.microphonePermissionDenied
+        case .denied:
+            throw RecorderError.microphonePermissionDenied("macOS reports access denied")
+        case .restricted:
+            throw RecorderError.microphonePermissionDenied("macOS reports access restricted (device policy)")
         @unknown default:
-            throw RecorderError.microphonePermissionDenied
+            throw RecorderError.microphonePermissionDenied("macOS reports an unknown permission state")
         }
     }
 }
@@ -82,7 +84,7 @@ public enum TranscriberError: Error, LocalizedError {
 public enum RecorderError: Error, LocalizedError {
     case fileMissing(String)
     case invalidAudioFile
-    case microphonePermissionDenied
+    case microphonePermissionDenied(String)
     case captureOverrun
     case diarizationOverrun
     case diarizationStopped
@@ -93,8 +95,10 @@ public enum RecorderError: Error, LocalizedError {
             "input file does not exist: \(path)"
         case .invalidAudioFile:
             "could not allocate an audio-file input buffer"
-        case .microphonePermissionDenied:
-            "microphone access is required; enable it in System Settings > Privacy & Security > Microphone"
+        case .microphonePermissionDenied(let state):
+            "microphone access is required (\(state)). macOS asks the app that started mac-stt; "
+                + "allow it in System Settings > Privacy & Security > Microphone, or reset with "
+                + "`tccutil reset Microphone BUNDLE_ID` and retry"
         case .captureOverrun:
             "audio inference fell behind the bounded capture queue; use a faster compute policy or close competing workloads"
         case .diarizationOverrun:
