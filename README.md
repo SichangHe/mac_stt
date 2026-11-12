@@ -23,7 +23,7 @@ mac-stt record                 # one take in this terminal; Control-C finishes; 
 mac-stt record --input a.wav   # same pipeline fed from a file at real-time pace
 mac-stt transcribe a.m4a b.wav # files, concurrently
 mac-stt serve --diarize --no-clipboard   # server options: speaker labels, keep clipboard untouched
-mac-stt status | stop | quit
+mac-stt status | stop | quit                # quit exits the server; it also exits by itself after 10 min idle
 ```
 
 Common options: `--diarize` (speaker labels), `--no-clipboard`, `-o FILE`, `--language en` (default: detect), `--model 1.7b|0.6b`.

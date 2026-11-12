@@ -8,6 +8,9 @@ public actor DictationService {
     private let engine: Task<any Qwen3Engine, Error>
     private let diarizer: Task<DiarizerModels, Error>?
     private var take: DictationTake?
+    /// The server exits after this long with no recording and no command, to free memory and the models.
+    static let idleExitSeconds: TimeInterval = 600
+    private var lastActivity = Date()
 
     public init(options: ServeOptions) {
         self.options = options
@@ -23,6 +26,18 @@ public actor DictationService {
                 Self.log("model load failed: \(error.localizedDescription)")
             }
         }
+        Task.detached { [self] in
+            while true {
+                try? await Task.sleep(for: .seconds(30))
+                await self.exitIfIdle()
+            }
+        }
+    }
+
+    private func exitIfIdle() {
+        guard take == nil, Date().timeIntervalSince(lastActivity) >= Self.idleExitSeconds else { return }
+        Self.log("idle for \(Int(Self.idleExitSeconds)) s; exiting")
+        exit(0)
     }
 
     static func log(_ message: String) {
@@ -30,6 +45,8 @@ public actor DictationService {
     }
 
     public func handle(_ verb: ControlVerb) async -> String {
+        lastActivity = Date()
+        defer { lastActivity = Date() }
         do {
             switch verb {
             case .toggle: return take == nil ? try await start() : try await stop()
