@@ -4,19 +4,39 @@ import MacSTTCore
 
 @main
 struct MacSTTMain {
-    static func main() async {
+    static func main() {
+        let command: Command
         do {
-            let command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
-            try await run(command)
-            // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
-            // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
-            fflush(stdout)
-            _exit(0)
+            command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
         } catch {
-            FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
-            FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
-            exit(2)
+            fail(error)
         }
+        // The app needs a real AppKit main loop, so it runs here, before any async work.
+        if case .app(let hotkey, let foreground) = command {
+            do {
+                if foreground {
+                    MainActor.assumeIsolated { MenuBarApp.run(hotkey: hotkey) }
+                }
+                print(try MenuBarApp.launchDetached(hotkey: hotkey))
+                _exit(0)
+            } catch { fail(error) }
+        }
+        Task {
+            do {
+                try await run(command)
+                // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
+                // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
+                fflush(stdout)
+                _exit(0)
+            } catch { fail(error) }
+        }
+        dispatchMain()
+    }
+
+    private static func fail(_ error: Error) -> Never {
+        FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+        FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
+        exit(2)
     }
 
     private static func run(_ command: Command) async throws {
@@ -53,8 +73,8 @@ struct MacSTTMain {
             try await Task.sleep(for: .seconds(Double(Int32.max)))
         case .control(let verb):
             print(try await ControlClient.send(verb))
-        case .app(let hotkey):
-            await MainActor.run { MenuBarApp.run(hotkey: hotkey) }
+        case .app:
+            break  // handled in main()
         case .appInstall(let hotkey):
             print(try LoginItem.install(hotkey: hotkey))
         case .appUninstall:

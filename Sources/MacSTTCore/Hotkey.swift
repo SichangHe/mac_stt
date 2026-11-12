@@ -2,7 +2,10 @@ import Foundation
 
 /// A global shortcut such as `ctrl+opt+d`. Modifier bits are Carbon's (cmdKey, shiftKey, optionKey, controlKey).
 public struct Hotkey: Equatable, Sendable {
-    public static let defaultSpec = "ctrl+opt+d"
+    public static let defaultSpec = "dictation"
+    /// The microphone key (F5 on recent Apple keyboards) reaches apps as key code 176 with no modifiers.
+    public static let dictationKeyCode: UInt32 = 176
+    public var isDictationKey: Bool { spec == "dictation" }
     public let keyCode: UInt32
     public let modifiers: UInt32
     public let spec: String
@@ -12,7 +15,7 @@ public struct Hotkey: Equatable, Sendable {
         public var errorDescription: String? {
             switch self {
             case .invalid(let s):
-                "invalid hotkey \(s); use modifiers (ctrl, opt, cmd, shift) plus one key, e.g. ctrl+opt+d, cmd+shift+space, ctrl+f5"
+                "invalid hotkey \(s); use dictation (the microphone key) or modifiers (ctrl, opt, cmd, shift) plus one key, e.g. ctrl+opt+d, cmd+shift+space, ctrl+f5"
             }
         }
     }
@@ -35,6 +38,12 @@ public struct Hotkey: Equatable, Sendable {
     }()
 
     public init(_ spec: String) throws {
+        if spec.lowercased() == "dictation" {
+            keyCode = Self.dictationKeyCode
+            modifiers = 0
+            self.spec = "dictation"
+            return
+        }
         let parts = spec.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init)
         guard parts.count >= 2, let key = Self.keyCodes[parts.last!] else { throw ParseError.invalid(spec) }
         var bits: UInt32 = 0

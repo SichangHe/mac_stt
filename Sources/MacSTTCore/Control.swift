@@ -8,6 +8,8 @@ public enum ControlSocket {
     }
     public static var path: String { directory.appendingPathComponent("control.sock").path }
     public static var logPath: String { directory.appendingPathComponent("serve.log").path }
+    public static var appLogPath: String { directory.appendingPathComponent("app.log").path }
+    public static var appLockPath: String { directory.appendingPathComponent("app.lock").path }
 
     static func address() -> sockaddr_un {
         var address = sockaddr_un()
@@ -83,14 +85,19 @@ public enum ControlClient {
     /// launched `toggle` (Karabiner, a hotkey app), which has no microphone permission and cannot be
     /// added in System Settings; disclaimed, macOS asks once for mac-stt itself.
     private static func launchServer() throws {
+        try spawnDetached(arguments: ["serve"], logPath: ControlSocket.logPath)
+    }
+
+    /// Runs this executable with `arguments` detached (own session, own TCC identity), output appended to `logPath`.
+    public static func spawnDetached(arguments: [String], logPath: String) throws {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: ControlSocket.logPath, contents: nil)
+        FileManager.default.createFile(atPath: logPath, contents: nil)
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
-        posix_spawn_file_actions_addopen(&actions, 1, ControlSocket.logPath, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        posix_spawn_file_actions_addopen(&actions, 1, logPath, O_WRONLY | O_APPEND | O_CREAT, 0o600)
         posix_spawn_file_actions_adddup2(&actions, 1, 2)
         var attributes: posix_spawnattr_t?
         posix_spawnattr_init(&attributes)
@@ -104,12 +111,12 @@ public enum ControlClient {
         // Run from the home directory: hotkey tools start commands in the read-only "/".
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         posix_spawn_file_actions_addchdir_np(&actions, home)
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(executable), strdup("serve"), nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = ([executable] + arguments).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0
         let status = posix_spawn(&pid, executable, &actions, &attributes, argv, environ)
         guard status == 0 else {
-            throw ControlError.serverFailed("cannot start mac-stt serve: \(String(cString: strerror(status)))")
+            throw ControlError.serverFailed("cannot start mac-stt \(arguments[0]): \(String(cString: strerror(status)))")
         }
     }
 }

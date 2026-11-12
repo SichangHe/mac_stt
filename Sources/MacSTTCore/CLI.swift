@@ -66,7 +66,7 @@ public enum Command: Equatable, Sendable {
     case setup(ModelOptions)
     case serve(ServeOptions)
     case control(ControlVerb)
-    case app(hotkey: Hotkey)
+    case app(hotkey: Hotkey, foreground: Bool)
     case appInstall(hotkey: Hotkey)
     case appUninstall
     case transcribe(TranscribeOptions)
@@ -121,17 +121,24 @@ public enum CLIParser {
                 rest.removeFirst()
             }
             var spec = Hotkey.defaultSpec
-            if !rest.isEmpty {
-                guard rest[0] == "--hotkey" else { throw CLIError.unknownOption(rest[0]) }
-                guard rest.count >= 2 else { throw CLIError.missingValue("--hotkey") }
-                guard rest.count == 2 else { throw CLIError.unknownOption(rest[2]) }
-                spec = rest[1]
+            var foreground = false
+            var i = 0
+            while i < rest.count {
+                switch rest[i] {
+                case "--hotkey":
+                    guard i + 1 < rest.count else { throw CLIError.missingValue("--hotkey") }
+                    spec = rest[i + 1]
+                    i += 1
+                case "--foreground": foreground = true
+                default: throw CLIError.unknownOption(rest[i])
+                }
+                i += 1
             }
             let key = try Hotkey(spec)
             switch mode {
             case "install": return .appInstall(hotkey: key)
             case "uninstall": return .appUninstall
-            default: return .app(hotkey: key)
+            default: return .app(hotkey: key, foreground: foreground)
             }
         case "toggle", "start", "stop", "status", "quit":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
@@ -241,7 +248,8 @@ usage:
   mac-stt start | stop                  start or stop recording explicitly
   mac-stt status                        report whether `serve` is idle or recording
   mac-stt quit                          exit the background `serve` (it also exits after 10 min idle)
-  mac-stt app [--hotkey ctrl+opt+d]     menu-bar icon + global hotkey; pastes the transcript on finish
+  mac-stt app [--hotkey KEY]            menu-bar icon + global key, runs in the background; pastes on finish
+                                        KEY: dictation (mic key, default) or e.g. ctrl+opt+d, cmd+shift+space, ctrl+f5
   mac-stt app install | uninstall       start the app at login (LaunchAgent) or stop doing so
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]

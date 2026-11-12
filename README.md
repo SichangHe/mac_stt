@@ -14,7 +14,8 @@ Install with this script. The binary is not notarized (no Apple developer accoun
 
 ## use
 
-1. Run `mac-stt app` (menu-bar microphone icon, default hotkey Control-Option-D; change with `--hotkey ctrl+opt+d`, modifiers ctrl/opt/cmd/shift plus a letter, digit, space, return, tab or F1-F12). `mac-stt app install [--hotkey SPEC]` starts it at login via a LaunchAgent; `mac-stt app uninstall` removes it. The app loads no models. When a take finishes it pastes (Command-V) into the focused field, which needs Accessibility permission for mac-stt (asked once; without it the text is only on the clipboard).
+1. Run `mac-stt app`: it returns at once and keeps running in the background (log: `~/Library/Application Support/mac-stt/app.log`; a second run does nothing). It adds a menu-bar microphone icon and listens for the microphone key (F5 on recent Apple keyboards). `--hotkey ctrl+opt+d` uses an ordinary combo instead (modifiers ctrl/opt/cmd/shift plus a letter, digit, space, return, tab or F1-F12). `mac-stt app install [--hotkey KEY]` starts it at login via a LaunchAgent; `mac-stt app uninstall` removes it. The app loads no models. When a take finishes it pastes (Command-V) into the focused field.
+   First run: allow mac-stt under System Settings > Privacy & Security > Input Monitoring and Accessibility (the microphone key is read through an event tap; pasting needs Accessibility), and set System Settings > Keyboard > Dictation > Shortcut to Off so macOS does not also start its own Dictation. Without Accessibility the text is only copied.
    Alternative: bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Karabiner, Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool); this does not paste.
 2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
 3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.

@@ -49,10 +49,12 @@ final class CLIParserTests: XCTestCase {
 
 final class AppParserTests: XCTestCase {
     func testAppDefaultsAndInstall() throws {
-        XCTAssertEqual(try CLIParser.parse(["app"]), .app(hotkey: try Hotkey(Hotkey.defaultSpec)))
+        XCTAssertEqual(try CLIParser.parse(["app"]), .app(hotkey: try Hotkey(Hotkey.defaultSpec), foreground: false))
         XCTAssertEqual(
             try CLIParser.parse(["app", "install", "--hotkey", "cmd+shift+space"]),
             .appInstall(hotkey: try Hotkey("cmd+shift+space")))
+        XCTAssertEqual(try CLIParser.parse(["app", "--foreground", "--hotkey", "ctrl+f5"]), .app(hotkey: try Hotkey("ctrl+f5"), foreground: true))
+        XCTAssertTrue(try Hotkey("dictation").isDictationKey)
         XCTAssertEqual(try CLIParser.parse(["app", "uninstall"]), .appUninstall)
     }
 
