@@ -25,10 +25,13 @@ if ! grep -q MAC_STT_METAL_3_1 "$dev"; then
     grep -q MAC_STT_METAL_3_1 "$dev" || { echo "MLX device.cpp patch target not found" >&2; exit 1; }
 fi
 xcodebuild build -scheme mac-stt -configuration Release -destination 'platform=macOS,arch=arm64' \
-    -derivedDataPath .xcbuild -skipPackagePluginValidation -skipMacroValidation >"$dist/build.log" 2>&1 ||
+    -derivedDataPath .xcbuild -skipPackagePluginValidation -skipMacroValidation \
+    -enableCodeCoverage NO CLANG_ENABLE_CODE_COVERAGE=NO >"$dist/build.log" 2>&1 ||
     { tail -n 80 "$dist/build.log"; exit 1; }
 products=.xcbuild/Build/Products/Release
 cp "$products/mac-stt" "$dist/mac-stt"
 metallib=$(find "$products" -name default.metallib | head -n 1)
 [ -n "$metallib" ] || { echo "no default.metallib in $products" >&2; exit 1; }
 cp "$metallib" "$dist/mlx.metallib"
+# Coverage instrumentation makes the binary write default.profraw into its working directory.
+if strings -a "$dist/mac-stt" | grep -q default.profraw; then echo "mac-stt is coverage-instrumented" >&2; exit 1; fi

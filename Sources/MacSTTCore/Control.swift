@@ -78,19 +78,39 @@ public enum ControlClient {
         return text
     }
 
+    /// Starts `serve` detached and as its own TCC "responsible process" (posix_spawn with the
+    /// responsibility disclaim attribute). Otherwise macOS attributes microphone access to whatever
+    /// launched `toggle` (Karabiner, a hotkey app), which has no microphone permission and cannot be
+    /// added in System Settings; disclaimed, macOS asks once for mac-stt itself.
     private static func launchServer() throws {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: ControlSocket.logPath, contents: nil)
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/nohup")
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
-        process.arguments = [executable, "serve"]
-        process.standardInput = FileHandle.nullDevice
-        let log = try FileHandle(forWritingTo: URL(fileURLWithPath: ControlSocket.logPath))
-        try log.seekToEnd()
-        process.standardOutput = log
-        process.standardError = log
-        try process.run()
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0)
+        posix_spawn_file_actions_addopen(&actions, 1, ControlSocket.logPath, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        posix_spawn_file_actions_adddup2(&actions, 1, 2)
+        var attributes: posix_spawnattr_t?
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        // New session: the server survives the launcher exiting (what nohup did before).
+        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSID))
+        typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+        if let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") {
+            _ = unsafeBitCast(symbol, to: Disclaim.self)(&attributes, 1)
+        }
+        // Run from the home directory: hotkey tools start commands in the read-only "/".
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        posix_spawn_file_actions_addchdir_np(&actions, home)
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(executable), strdup("serve"), nil]
+        defer { argv.forEach { free($0) } }
+        var pid: pid_t = 0
+        let status = posix_spawn(&pid, executable, &actions, &attributes, argv, environ)
+        guard status == 0 else {
+            throw ControlError.serverFailed("cannot start mac-stt serve: \(String(cString: strerror(status)))")
+        }
     }
 }
 
