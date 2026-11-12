@@ -46,3 +46,19 @@ final class CLIParserTests: XCTestCase {
         }
     }
 }
+
+final class AppParserTests: XCTestCase {
+    func testAppDefaultsAndInstall() throws {
+        XCTAssertEqual(try CLIParser.parse(["app"]), .app(hotkey: try Hotkey(Hotkey.defaultSpec)))
+        XCTAssertEqual(
+            try CLIParser.parse(["app", "install", "--hotkey", "cmd+shift+space"]),
+            .appInstall(hotkey: try Hotkey("cmd+shift+space")))
+        XCTAssertEqual(try CLIParser.parse(["app", "uninstall"]), .appUninstall)
+    }
+
+    func testBadHotkeys() {
+        for bad in ["d", "shift+d", "ctrl+", "foo+d", "ctrl+opt+nope"] {
+            XCTAssertThrowsError(try Hotkey(bad))
+        }
+    }
+}

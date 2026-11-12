@@ -10,9 +10,12 @@ curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh |
 
 The script downloads the latest release, checks its SHA-256, installs `~/.local/bin/mac-stt`, then downloads and verifies the models (about 2.7 GB) and warms Core ML's cache. It needs an Apple Silicon Mac on macOS 14 or newer and no `sudo`. See [requirements](#requirements).
 
+Install with this script. The binary is not notarized (no Apple developer account), so a copy downloaded in a browser is blocked by Gatekeeper; `curl` does not set the quarantine flag, so the script's copy runs.
+
 ## use
 
-1. Bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool).
+1. Run `mac-stt app` (menu-bar microphone icon, default hotkey Control-Option-D; change with `--hotkey ctrl+opt+d`, modifiers ctrl/opt/cmd/shift plus a letter, digit, space, return, tab or F1-F12). `mac-stt app install [--hotkey SPEC]` starts it at login via a LaunchAgent; `mac-stt app uninstall` removes it. The app loads no models. When a take finishes it pastes (Command-V) into the focused field, which needs Accessibility permission for mac-stt (asked once; without it the text is only on the clipboard).
+   Alternative: bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Karabiner, Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool); this does not paste.
 2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
 3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.
 

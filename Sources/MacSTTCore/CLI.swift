@@ -66,6 +66,9 @@ public enum Command: Equatable, Sendable {
     case setup(ModelOptions)
     case serve(ServeOptions)
     case control(ControlVerb)
+    case app(hotkey: Hotkey)
+    case appInstall(hotkey: Hotkey)
+    case appUninstall
     case transcribe(TranscribeOptions)
     case record(RecordOptions)
     case profileModels(paths: [String], compute: ComputePolicy)
@@ -110,6 +113,26 @@ public enum CLIParser {
             let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
             guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
             return .serve(ServeOptions(model: parsed.model, output: parsed.output))
+        case "app":
+            var rest = rest
+            var mode = "run"
+            if let first = rest.first, first == "install" || first == "uninstall" {
+                mode = first
+                rest.removeFirst()
+            }
+            var spec = Hotkey.defaultSpec
+            if !rest.isEmpty {
+                guard rest[0] == "--hotkey" else { throw CLIError.unknownOption(rest[0]) }
+                guard rest.count >= 2 else { throw CLIError.missingValue("--hotkey") }
+                guard rest.count == 2 else { throw CLIError.unknownOption(rest[2]) }
+                spec = rest[1]
+            }
+            let key = try Hotkey(spec)
+            switch mode {
+            case "install": return .appInstall(hotkey: key)
+            case "uninstall": return .appUninstall
+            default: return .app(hotkey: key)
+            }
         case "toggle", "start", "stop", "status", "quit":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .control(ControlVerb(rawValue: name)!)
@@ -218,6 +241,8 @@ usage:
   mac-stt start | stop                  start or stop recording explicitly
   mac-stt status                        report whether `serve` is idle or recording
   mac-stt quit                          exit the background `serve` (it also exits after 10 min idle)
+  mac-stt app [--hotkey ctrl+opt+d]     menu-bar icon + global hotkey; pastes the transcript on finish
+  mac-stt app install | uninstall       start the app at login (LaunchAgent) or stop doing so
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
@@ -226,8 +251,8 @@ usage:
 options: --model 1.7b|0.6b  --language CODE (default: detect)  --compute ane|gpu|cpu|all
          --no-clipboard  -o PATH  --input-speed N (record --input pacing, default 1)
 
-Bind `mac-stt toggle` to a key with any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon,
-BetterTouchTool). The first `toggle` starts `serve` in the background if it is not running.
+`mac-stt app` needs no hotkey tool; pasting needs Accessibility permission (asked once).
+Alternatively bind `mac-stt toggle` to a key with any hotkey tool (Shortcuts, skhd, Karabiner, Raycast). The first `toggle` starts `serve` in the background if it is not running.
 Compute `ane` means the audio encoder may use CPU and Neural Engine and the decoder CPU and GPU.
 That is a configuration, not proof of placement: use `profile-model` and `powermetrics`.
 """

@@ -53,6 +53,12 @@ struct MacSTTMain {
             try await Task.sleep(for: .seconds(Double(Int32.max)))
         case .control(let verb):
             print(try await ControlClient.send(verb))
+        case .app(let hotkey):
+            await MainActor.run { MenuBarApp.run(hotkey: hotkey) }
+        case .appInstall(let hotkey):
+            print(try LoginItem.install(hotkey: hotkey))
+        case .appUninstall:
+            print(LoginItem.uninstall())
         case .transcribe(let options):
             guard options.paths.count == 1 || options.output.outputPath == nil else {
                 throw MainError.oneOutputForMultipleInputs
