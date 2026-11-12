@@ -5,7 +5,8 @@ import Foundation
 
 public final class MicrophoneCapture: @unchecked Sendable {
     private static let bufferedFrames = 64
-    private let engine = AVAudioEngine()
+    // Released on stop: macOS keeps the microphone indicator on while an engine that used the input node exists.
+    private var engine: AVAudioEngine? = AVAudioEngine()
     private let buffers = BoundedAsyncStream<AVAudioPCMBuffer>(
         capacity: bufferedFrames,
         overflowError: RecorderError.captureOverrun
@@ -14,6 +15,7 @@ public final class MicrophoneCapture: @unchecked Sendable {
     public init() {}
 
     public func start() throws -> AsyncThrowingStream<AVAudioPCMBuffer, Error> {
+        guard let engine else { preconditionFailure("MicrophoneCapture is single-use") }
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
@@ -40,8 +42,12 @@ public final class MicrophoneCapture: @unchecked Sendable {
     }
 
     public func stop() {
-        if engine.isRunning { engine.stop() }
-        engine.inputNode.removeTap(onBus: 0)
+        if let engine {
+            if engine.isRunning { engine.stop() }
+            engine.inputNode.removeTap(onBus: 0)
+            engine.reset()
+        }
+        engine = nil
         buffers.finish()
     }
 }
