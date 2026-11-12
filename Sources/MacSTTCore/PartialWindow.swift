@@ -10,7 +10,7 @@ final class PartialWindow {
     private let label = NSTextField(wrappingLabelWithString: "")
     private static let width: CGFloat = 520
 
-    static var disabled: Bool { ProcessInfo.processInfo.environment["MAC_STT_NO_WINDOW"] != nil }
+    nonisolated static var disabled: Bool { ProcessInfo.processInfo.environment["MAC_STT_NO_WINDOW"] != nil }
 
     private func makePanel() -> NSPanel {
         NSApplication.shared.setActivationPolicy(.accessory)
