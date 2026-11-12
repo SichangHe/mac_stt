@@ -60,30 +60,27 @@ public actor DictationService {
         }
         take = try DictationTake(
             input: input, engine: engine, diarizer: diarizer, language: options.model.language,
-            onPartial: { text in Self.log("partial: \(text)") })
+            onPartial: { text in
+                Self.log("partial: \(text)")
+                PartialWindow.update(text)
+            })
+        PartialWindow.update("")
         Self.log("recording started")
-        Self.cue("Pop")
+        Earcon.start.play()
         return "recording"
     }
 
     private func stop() async throws -> String {
         guard let active = take else { return "not recording" }
         take = nil
+        defer { PartialWindow.update(nil) }
         let result = try await active.stop()
         Self.log(
             String(
                 format: "speech_seconds=%.1f finalize_seconds=%.3f", result.speechSeconds, result.finalizeSeconds))
         try ResultWriter.write(result.document, options: options.output)
-        Self.cue("Tink")
+        Earcon.end.play()
         return result.document.rendered
     }
 
-    private static func cue(_ name: String) {
-        let path = "/System/Library/Sounds/\(name).aiff"
-        guard FileManager.default.fileExists(atPath: path) else { return }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
-        process.arguments = [path]
-        try? process.run()
-    }
 }
