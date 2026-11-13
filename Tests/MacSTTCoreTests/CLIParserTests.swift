@@ -104,6 +104,10 @@ final class LocalSigningTests: XCTestCase {
         let report = LocalSigning.setUpApp(cli: copy, app: app)
         XCTAssertFalse(report.contains("failed"), report)
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: app.path + "/Contents/MacOS/mac-stt"))
-        XCTAssertTrue(LocalSigning.requirement(of: app.path).contains(LocalSigning.bundleID), report)
+        // Prints the facts for the log: what identity macOS would record for this ad-hoc signed app.
+        print("DR-CHECK raw: \(LocalSigning.exec(["/usr/bin/codesign", "-d", "-r-", app.path]).output)")
+        print("DR-CHECK verbose: \(LocalSigning.exec(["/usr/bin/codesign", "-dvv", app.path]).output)")
+        let requirement = LocalSigning.requirement(of: app.path)
+        XCTAssertTrue(requirement.contains("cdhash") || requirement.contains(LocalSigning.bundleID), requirement)
     }
 }

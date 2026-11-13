@@ -42,8 +42,10 @@ public enum LocalSigning {
 
     /// Designated requirement text, e.g. `identifier "x" and certificate leaf = H"..."` (stable) or `cdhash H"..."`.
     public static func requirement(of path: String) -> String {
-        exec(["/usr/bin/codesign", "-d", "-r-", path]).output
-            .split(separator: "\n").first { $0.hasPrefix("designated") }.map(String.init) ?? "unknown"
+        let raw = exec(["/usr/bin/codesign", "-d", "-r-", path]).output
+        // Ad-hoc signatures print the line as "# designated => cdhash H..." with a leading "# ".
+        return raw.split(separator: "\n").map { $0.drop(while: { $0 == "#" || $0 == " " }) }
+            .first { $0.hasPrefix("designated") }.map(String.init) ?? "unknown: \(raw)"
     }
 
     /// (Re)builds a signed app bundle that wraps a copy of it.
