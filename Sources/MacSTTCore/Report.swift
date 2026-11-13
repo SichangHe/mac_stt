@@ -25,7 +25,7 @@ public enum Report {
     /// text, so it is redacted; so is anything after "partial: ".
     static let knownPrefixes = ["[", "mac-stt ", "using cached", "mlx device", "trace:", "downloading"]
 
-    static func redact(_ text: String, lines: Int = 300) -> String {
+    public static func redact(_ text: String, lines: Int = 300) -> String {
         text.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).map { line -> String in
             if let range = line.range(of: "partial: ") {
                 return String(line[..<range.upperBound]) + "<\(line[range.upperBound...].count) chars redacted>"
