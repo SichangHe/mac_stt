@@ -28,14 +28,32 @@ public enum LocalSigning {
         p.standardOutput = pipe
         p.standardError = pipe
         do { try p.run() } catch { return (-1, "cannot run \(args[0])") }
+        // A command that waits for a GUI dialog must not hang us forever.
+        let timer = DispatchSource.makeTimerSource(queue: .global())
+        timer.schedule(deadline: .now() + 60)
+        timer.setEventHandler { if p.isRunning { p.terminate() } }
+        timer.resume()
+        defer { timer.cancel() }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return (p.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 
+    /// SHA-1 of the signing certificate. Selecting by hash lets codesign use the self-signed certificate
+    /// without it being trusted system-wide (trusting it needs a password dialog).
+    static func identityHash(_ keychain: String) -> String? {
+        let out = exec(["/usr/bin/security", "find-identity", "-p", "codesigning", keychain]).output
+        for line in out.split(separator: "\n") where line.contains(identityName) {
+            if let token = line.split(separator: " ").first(where: { $0.count == 40 && $0.allSatisfy(\.isHexDigit) }) {
+                return String(token)
+            }
+        }
+        return nil
+    }
+
     static func hasIdentity(_ keychain: String) -> Bool {
         guard FileManager.default.fileExists(atPath: keychain) else { return false }
-        return exec(["/usr/bin/security", "find-identity", "-v", "-p", "codesigning", keychain]).output.contains(identityName)
+        return exec(["/usr/bin/security", "find-identity", "-p", "codesigning", keychain]).output.contains(identityName)
     }
 
     /// Creates the keychain and certificate if missing. Returns an error text on failure.
@@ -71,9 +89,6 @@ public enum LocalSigning {
             ["/usr/bin/security", "set-keychain-settings", keychain],
             ["/usr/bin/security", "unlock-keychain", "-p", "", keychain],
             ["/usr/bin/security", "import", tmp + "/id.p12", "-k", keychain, "-P", "mac-stt", "-T", "/usr/bin/codesign"],
-            // codesign only uses identities macOS considers valid, so the new certificate must be trusted for
-            // code signing. This may show one system password dialog.
-            ["/usr/bin/security", "add-trusted-cert", "-p", "codeSign", "-k", keychain, tmp + "/cert.pem"],
             ["/usr/bin/security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", "", keychain],
         ]
         for step in steps {
@@ -85,7 +100,7 @@ public enum LocalSigning {
 
     static func codesign(_ path: String, keychain: String?) -> String? {
         var args = ["/usr/bin/codesign", "--force", "--identifier", bundleID]
-        if let keychain { args += ["--sign", identityName, "--keychain", keychain] } else { args += ["--sign", "-"] }
+        if let keychain, let hash = identityHash(keychain) { args += ["--sign", hash, "--keychain", keychain] } else { args += ["--sign", "-"] }
         args.append(path)
         let r = exec(args)
         return r.status == 0 ? nil : r.output
