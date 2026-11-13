@@ -41,8 +41,7 @@ mkdir -p "$prefix/bin"
 install -m 755 "$work/mac-stt" "$prefix/bin/mac-stt"
 install -m 644 "$work/mlx.metallib" "$prefix/bin/mlx.metallib"
 echo "installed $prefix/bin/mac-stt"
-# Sign with a stable per-machine identity and build ~/Applications/mac-stt.app, so macOS permission grants
-# (Accessibility, Input Monitoring, Microphone) survive updates. Failure is not fatal.
+# Build ~/Applications/mac-stt.app (the app macOS lists under Accessibility and Input Monitoring). Not fatal.
 "$prefix/bin/mac-stt" app setup || echo "warning: app setup failed; run 'mac-stt app setup' later" >&2
 
 if [ "${MAC_STT_SKIP_SETUP:-}" != 1 ]; then

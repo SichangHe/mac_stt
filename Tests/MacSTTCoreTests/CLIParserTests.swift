@@ -94,25 +94,16 @@ final class ReportRedactionTests: XCTestCase {
 }
 
 final class LocalSigningTests: XCTestCase {
-    /// Runs on a real Mac in CI: the identity is created, and the requirement is the same for two different binaries.
-    func testStableRequirementAcrossDifferentBinaries() throws {
+    func testBuildsSignedBundleWithFixedIdentifier() throws {
         let dir = NSTemporaryDirectory() + "sign-\(UUID().uuidString)"
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: dir) }
-        let keychain = dir + "/test.keychain-db"
-        var requirements: [String] = []
-        for source in ["/bin/ls", "/bin/cat"] {
-            let copy = dir + "/mac-stt"
-            try? FileManager.default.removeItem(atPath: copy)
-            try FileManager.default.copyItem(atPath: source, toPath: copy)
-            let app = URL(fileURLWithPath: dir + "/mac-stt.app")
-            let report = LocalSigning.setUpApp(cli: copy, app: app, keychain: keychain)
-            print(report)
-            XCTAssertFalse(report.contains("falling back"), report)
-            XCTAssertFalse(report.contains("failed"), report)
-            requirements.append(LocalSigning.requirement(of: app.path))
-        }
-        XCTAssertEqual(requirements[0], requirements[1])
-        XCTAssertTrue(requirements[0].contains("certificate leaf"), requirements[0])
+        let copy = dir + "/mac-stt"
+        try FileManager.default.copyItem(atPath: "/bin/ls", toPath: copy)
+        let app = URL(fileURLWithPath: dir + "/mac-stt.app")
+        let report = LocalSigning.setUpApp(cli: copy, app: app)
+        XCTAssertFalse(report.contains("failed"), report)
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: app.path + "/Contents/MacOS/mac-stt"))
+        XCTAssertTrue(LocalSigning.requirement(of: app.path).contains(LocalSigning.bundleID), report)
     }
 }

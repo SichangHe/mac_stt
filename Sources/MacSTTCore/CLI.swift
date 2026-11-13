@@ -257,8 +257,8 @@ usage:
   mac-stt app [--hotkey KEY]            menu-bar icon + global key, runs in the background; pastes on finish
                                         KEY: dictation (mic key, default) or e.g. ctrl+opt+d, cmd+shift+space, ctrl+f5
   mac-stt app install | uninstall       start the app at login (LaunchAgent) or stop doing so
-  mac-stt app setup                     (re)build ~/Applications/mac-stt.app and sign it with a stable local identity
-                                        so permission grants survive updates; the installer runs this
+  mac-stt app setup                     (re)build ~/Applications/mac-stt.app, the signed app that
+                                        macOS lists under Accessibility/Input Monitoring; the installer runs this
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
