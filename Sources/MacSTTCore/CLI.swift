@@ -70,6 +70,7 @@ public enum Command: Equatable, Sendable {
     case app(hotkey: Hotkey, foreground: Bool)
     case appInstall(hotkey: Hotkey)
     case appUninstall
+    case appSetup
     case transcribe(TranscribeOptions)
     case record(RecordOptions)
     case profileModels(paths: [String], compute: ComputePolicy)
@@ -120,7 +121,7 @@ public enum CLIParser {
         case "app":
             var rest = rest
             var mode = "run"
-            if let first = rest.first, first == "install" || first == "uninstall" {
+            if let first = rest.first, first == "install" || first == "uninstall" || first == "setup" {
                 mode = first
                 rest.removeFirst()
             }
@@ -142,6 +143,7 @@ public enum CLIParser {
             switch mode {
             case "install": return .appInstall(hotkey: key)
             case "uninstall": return .appUninstall
+            case "setup": return .appSetup
             default: return .app(hotkey: key, foreground: foreground)
             }
         case "toggle", "start", "stop", "status", "quit":
@@ -255,6 +257,8 @@ usage:
   mac-stt app [--hotkey KEY]            menu-bar icon + global key, runs in the background; pastes on finish
                                         KEY: dictation (mic key, default) or e.g. ctrl+opt+d, cmd+shift+space, ctrl+f5
   mac-stt app install | uninstall       start the app at login (LaunchAgent) or stop doing so
+  mac-stt app setup                     (re)build ~/Applications/mac-stt.app and sign it with a stable local identity
+                                        so permission grants survive updates; the installer runs this
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]

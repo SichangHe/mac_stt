@@ -21,6 +21,38 @@ public final class MenuBarApp: NSObject {
         LogPrune.append(message, to: ControlSocket.appLogPath)
     }
 
+    nonisolated(unsafe) private static var crashFD: Int32 = -1
+    nonisolated(unsafe) private static var signalSources: [DispatchSourceSignal] = []
+
+    /// Makes every way the process can end leave a line in app.log; a SIGKILL cannot be logged
+    /// (macOS does that when it revokes a permission), but then the log simply stops without an exit line.
+    private static func installExitLogging() {
+        for sig in [SIGTERM, SIGHUP, SIGINT, SIGQUIT] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler {
+                log("received signal \(sig); exiting")
+                exit(128 + sig)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+        signal(SIGPIPE, SIG_IGN)
+        crashFD = open(ControlSocket.appLogPath, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+        for sig in [SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGFPE, SIGTRAP] {
+            signal(sig) { received in
+                let text = Array("fatal signal \(received) (crash); see ~/Library/Logs/DiagnosticReports\n".utf8)
+                _ = text.withUnsafeBytes { write(MenuBarApp.crashFD, $0.baseAddress, text.count) }
+                signal(received, SIG_DFL)
+                raise(received)
+            }
+        }
+        NSSetUncaughtExceptionHandler { exception in
+            MenuBarApp.log("uncaught exception \(exception.name.rawValue): \(exception.reason ?? "")")
+        }
+        atexit { MenuBarApp.log("process exiting") }
+    }
+
     /// Holds an exclusive lock for the life of the process; returns false if another app already has it.
     private static func takeLock() -> Bool {
         try? FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
@@ -36,9 +68,16 @@ public final class MenuBarApp: NSObject {
             defer { close(fd) }
             if flock(fd, LOCK_EX | LOCK_NB) != 0 { return "mac-stt app is already running (log: \(ControlSocket.appLogPath))" }
         }
+        // Run the signed app bundle when there is one, so macOS lists it under Accessibility and Input Monitoring.
+        var note = ""
+        if !FileManager.default.isExecutableFile(atPath: LocalSigning.appExecutable) {
+            let cli = Bundle.main.executablePath ?? CommandLine.arguments[0]
+            note = "\n" + LocalSigning.setUpApp(cli: cli)
+        }
+        let exe = FileManager.default.isExecutableFile(atPath: LocalSigning.appExecutable) ? LocalSigning.appExecutable : nil
         try ControlClient.spawnDetached(
-            arguments: ["app", "--foreground", "--hotkey", hotkey.spec], logPath: ControlSocket.appLogPath)
-        return "mac-stt app started in the background (key: \(hotkey.spec); log: \(ControlSocket.appLogPath)); `mac-stt app install` starts it at login"
+            arguments: ["app", "--foreground", "--hotkey", hotkey.spec], logPath: ControlSocket.appLogPath, executable: exe)
+        return "mac-stt app started in the background (key: \(hotkey.spec); log: \(ControlSocket.appLogPath)); `mac-stt app install` starts it at login)" + note
     }
 
     public static func run(hotkey: Hotkey) -> Never {
@@ -46,6 +85,8 @@ public final class MenuBarApp: NSObject {
             log("another mac-stt app is already running; exiting")
             exit(0)
         }
+        installExitLogging()
+        log("pid \(getpid()), executable \(Bundle.main.executablePath ?? "?"), bundle id \(Bundle.main.bundleIdentifier ?? "none")")
         log("app starting, key \(hotkey.spec), accessibility trusted: \(AXIsProcessTrusted())")
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
@@ -66,9 +107,11 @@ public final class MenuBarApp: NSObject {
         toggle.target = self
         let access = NSMenuItem(title: "Grant Accessibility (needed to paste)…", action: #selector(openAccessibility), keyEquivalent: "")
         access.target = self
+        let input = NSMenuItem(title: "Grant Input Monitoring (needed for the mic key)…", action: #selector(openInputMonitoring), keyEquivalent: "")
+        input.target = self
         let quit = NSMenuItem(title: "Quit mac-stt app", action: #selector(quitApp), keyEquivalent: "q")
         quit.target = self
-        for entry in [toggle, access, .separator(), quit] { menu.addItem(entry) }
+        for entry in [toggle, access, input, .separator(), quit] { menu.addItem(entry) }
         item.menu = menu
         if hotkey.isDictationKey { installTap() } else { registerHotkey() }
     }
@@ -146,6 +189,11 @@ public final class MenuBarApp: NSObject {
 
     @objc private func menuToggle() { fire() }
     @objc private func quitApp() { NSApp.terminate(nil) }
+    @objc private func openInputMonitoring() {
+        _ = CGRequestListenEventAccess()
+        NSWorkspace.shared.open(
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+    }
     @objc private func openAccessibility() {
         NSWorkspace.shared.open(
             URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
@@ -199,10 +247,11 @@ public enum LoginItem {
     }
 
     public static func install(hotkey: Hotkey) throws -> String {
-        let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        let exe = FileManager.default.isExecutableFile(atPath: LocalSigning.appExecutable)
+            ? LocalSigning.appExecutable : (Bundle.main.executablePath ?? CommandLine.arguments[0])
         let plist: [String: Any] = [
             "Label": label, "ProgramArguments": [exe, "app", "--foreground", "--hotkey", hotkey.spec],
-            "RunAtLoad": true, "ProcessType": "Interactive",
+            "RunAtLoad": true, "KeepAlive": ["SuccessfulExit": false], "ProcessType": "Interactive",
         ]
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try FileManager.default.createDirectory(

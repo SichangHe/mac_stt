@@ -82,3 +82,37 @@ final class LogPruneTests: XCTestCase {
         XCTAssertTrue(kept.contains("fresh"))
     }
 }
+
+final class ReportRedactionTests: XCTestCase {
+    func testUnknownAndPartialLinesAreRedacted() {
+        let log = "[2026-01-01T00:00:00Z] recording started\n[2026-01-01T00:00:01Z] partial: secret words\nsecret transcript line\nmac-stt serve listening"
+        let out = Report.redact(log)
+        XCTAssertFalse(out.contains("secret"))
+        XCTAssertTrue(out.contains("recording started"))
+        XCTAssertTrue(out.contains("mac-stt serve listening"))
+    }
+}
+
+final class LocalSigningTests: XCTestCase {
+    /// Runs on a real Mac in CI: the identity is created, and the requirement is the same for two different binaries.
+    func testStableRequirementAcrossDifferentBinaries() throws {
+        let dir = NSTemporaryDirectory() + "sign-\(UUID().uuidString)"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let keychain = dir + "/test.keychain-db"
+        var requirements: [String] = []
+        for source in ["/bin/ls", "/bin/cat"] {
+            let copy = dir + "/mac-stt"
+            try? FileManager.default.removeItem(atPath: copy)
+            try FileManager.default.copyItem(atPath: source, toPath: copy)
+            let app = URL(fileURLWithPath: dir + "/mac-stt.app")
+            let report = LocalSigning.setUpApp(cli: copy, app: app, keychain: keychain)
+            print(report)
+            XCTAssertFalse(report.contains("falling back"), report)
+            XCTAssertFalse(report.contains("failed"), report)
+            requirements.append(LocalSigning.requirement(of: app.path))
+        }
+        XCTAssertEqual(requirements[0], requirements[1])
+        XCTAssertTrue(requirements[0].contains("certificate leaf"), requirements[0])
+    }
+}

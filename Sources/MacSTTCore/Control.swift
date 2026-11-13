@@ -85,14 +85,14 @@ public enum ControlClient {
     /// launched `toggle` (Karabiner, a hotkey app), which has no microphone permission and cannot be
     /// added in System Settings; disclaimed, macOS asks once for mac-stt itself.
     private static func launchServer() throws {
-        try spawnDetached(arguments: ["serve"], logPath: ControlSocket.logPath)
+        try spawnDetached(arguments: ["serve"], logPath: ControlSocket.logPath, executable: LocalSigning.serveExecutable())
     }
 
     /// Runs this executable with `arguments` detached (own session, own TCC identity), output appended to `logPath`.
-    public static func spawnDetached(arguments: [String], logPath: String) throws {
+    public static func spawnDetached(arguments: [String], logPath: String, executable: String? = nil) throws {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: logPath) { FileManager.default.createFile(atPath: logPath, contents: nil) }
-        let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
+        let executable = executable ?? Bundle.main.executablePath ?? CommandLine.arguments[0]
         var actions: posix_spawn_file_actions_t?
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }

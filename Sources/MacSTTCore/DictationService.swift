@@ -83,7 +83,7 @@ public actor DictationService {
         take = try DictationTake(
             input: input, engine: engine, diarizer: diarizer, language: options.model.language,
             onPartial: { text in
-                Self.log("partial: \(text)")
+                Self.log("partial update (\(text.count) chars)")
                 PartialWindow.update(text)
             })
         PartialWindow.update("")
@@ -100,7 +100,7 @@ public actor DictationService {
         Self.log(
             String(
                 format: "speech_seconds=%.1f finalize_seconds=%.3f", result.speechSeconds, result.finalizeSeconds))
-        try ResultWriter.write(result.document, options: options.output)
+        try ResultWriter.write(result.document, options: options.output, echo: false)
         Earcon.end.play()
         return result.document.rendered
     }

@@ -79,6 +79,8 @@ struct MacSTTMain {
             break  // handled in main()
         case .appInstall(let hotkey):
             print(try LoginItem.install(hotkey: hotkey))
+        case .appSetup:
+            print(LocalSigning.setUpApp(cli: Bundle.main.executablePath ?? CommandLine.arguments[0]))
         case .appUninstall:
             print(LoginItem.uninstall())
         case .transcribe(let options):

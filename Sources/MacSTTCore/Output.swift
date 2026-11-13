@@ -8,9 +8,10 @@ public enum OutputError: Error, LocalizedError {
 }
 
 public enum ResultWriter {
-    public static func write(_ document: TranscriptDocument, options: OutputOptions) throws {
+    /// `echo: false` keeps the transcript out of stdout; `serve`'s stdout is its log file.
+    public static func write(_ document: TranscriptDocument, options: OutputOptions, echo: Bool = true) throws {
         let rendered = document.rendered
-        print(rendered)
+        if echo { print(rendered) }
         if let path = options.outputPath {
             try Data((rendered + "\n").utf8).write(
                 to: URL(fileURLWithPath: (path as NSString).expandingTildeInPath),

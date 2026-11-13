@@ -21,14 +21,39 @@ public enum Report {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Last lines of a log, with dictated text removed: serve logs partial transcripts.
-    static func tail(_ path: String, lines: Int = 300) -> String {
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return "(no log at \(path))" }
-        return text.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).map { line -> String in
+    /// Log lines we write start with `[ISO time]` or are known tool messages. Anything else could be dictated
+    /// text, so it is redacted; so is anything after "partial: ".
+    static let knownPrefixes = ["[", "mac-stt ", "using cached", "mlx device", "trace:", "downloading"]
+
+    static func redact(_ text: String, lines: Int = 300) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).map { line -> String in
             if let range = line.range(of: "partial: ") {
                 return String(line[..<range.upperBound]) + "<\(line[range.upperBound...].count) chars redacted>"
             }
-            return String(line)
+            if line.isEmpty || knownPrefixes.contains(where: { line.hasPrefix($0) }) { return String(line) }
+            return "<\(line.count) chars redacted>"
+        }.joined(separator: "\n")
+    }
+
+    static func tail(_ path: String, lines: Int = 300) -> String {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return "(no log at \(path))" }
+        return redact(text, lines: lines)
+    }
+
+    /// Newest macOS crash reports for mac-stt (macOS writes them when a process crashes).
+    static func crashReports() -> String {
+        let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/DiagnosticReports")
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [])
+            .filter { $0.hasPrefix("mac-stt") && ($0.hasSuffix(".ips") || $0.hasSuffix(".crash")) }
+        let newest = names.compactMap { name -> (String, Date)? in
+            guard let date = (try? FileManager.default.attributesOfItem(atPath: dir.appendingPathComponent(name).path))?[.modificationDate] as? Date
+            else { return nil }
+            return (name, date)
+        }.sorted { $0.1 > $1.1 }.prefix(3)
+        if newest.isEmpty { return "(none in \(dir.path))" }
+        return newest.map { name, _ in
+            let text = (try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)) ?? ""
+            return "--- \(name)\n" + String(text.prefix(8000))
         }.joined(separator: "\n")
     }
 
@@ -55,9 +80,11 @@ public enum Report {
             "permissions seen by this process",
             "microphone: \(mic)\naccessibility: \(AXIsProcessTrusted())\ninput monitoring: \(CGPreflightListenEventAccess())\n(run from a terminal these describe the terminal, not the background app)"))
         sections.append(("processes", run(["/bin/sh", "-c", "pgrep -fl 'mac-stt (serve|app)' || echo none"])))
+        sections.append(("identity", "\(LocalSigning.requirement(of: Bundle.main.executablePath ?? CommandLine.arguments[0]))\napp bundle: \(FileManager.default.fileExists(atPath: LocalSigning.appExecutable) ? LocalSigning.requirement(of: LocalSigning.defaultAppURL.path) : "not installed")"))
         sections.append(("login item", FileManager.default.fileExists(atPath: LoginItem.plistURL.path) ? "installed" : "not installed"))
         sections.append(("serve log (last 300 lines, dictated text redacted)", tail(ControlSocket.logPath)))
         sections.append(("app log (last 300 lines)", tail(ControlSocket.appLogPath)))
+        sections.append(("macOS crash reports for mac-stt (newest 3)", crashReports()))
         return sections.map { "=== \($0.0) ===\n\($0.1)\n" }.joined(separator: "\n")
     }
 
