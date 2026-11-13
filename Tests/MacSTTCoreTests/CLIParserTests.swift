@@ -108,6 +108,6 @@ final class LocalSigningTests: XCTestCase {
         print("DR-CHECK raw: \(LocalSigning.exec(["/usr/bin/codesign", "-d", "-r-", app.path]).output)")
         print("DR-CHECK verbose: \(LocalSigning.exec(["/usr/bin/codesign", "-dvv", app.path]).output)")
         let requirement = LocalSigning.requirement(of: app.path)
-        XCTAssertTrue(requirement.contains("cdhash") || requirement.contains(LocalSigning.bundleID), requirement)
+        XCTAssertTrue(requirement.contains("cdhash"), requirement)  // ad-hoc: the requirement is the code hash, not the identifier
     }
 }
