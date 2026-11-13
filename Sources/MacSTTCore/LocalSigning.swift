@@ -35,7 +35,7 @@ public enum LocalSigning {
 
     static func hasIdentity(_ keychain: String) -> Bool {
         guard FileManager.default.fileExists(atPath: keychain) else { return false }
-        return exec(["/usr/bin/security", "find-identity", "-p", "codesigning", keychain]).output.contains(identityName)
+        return exec(["/usr/bin/security", "find-identity", "-v", "-p", "codesigning", keychain]).output.contains(identityName)
     }
 
     /// Creates the keychain and certificate if missing. Returns an error text on failure.
@@ -71,6 +71,9 @@ public enum LocalSigning {
             ["/usr/bin/security", "set-keychain-settings", keychain],
             ["/usr/bin/security", "unlock-keychain", "-p", "", keychain],
             ["/usr/bin/security", "import", tmp + "/id.p12", "-k", keychain, "-P", "mac-stt", "-T", "/usr/bin/codesign"],
+            // codesign only uses identities macOS considers valid, so the new certificate must be trusted for
+            // code signing. This may show one system password dialog.
+            ["/usr/bin/security", "add-trusted-cert", "-p", "codeSign", "-k", keychain, tmp + "/cert.pem"],
             ["/usr/bin/security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", "", keychain],
         ]
         for step in steps {
