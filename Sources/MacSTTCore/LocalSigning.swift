@@ -16,7 +16,7 @@ public enum LocalSigning {
     public static var appExecutable: String { defaultAppURL.appendingPathComponent("Contents/MacOS/mac-stt").path }
 
     @discardableResult
-    static func exec(_ args: [String]) -> (status: Int32, output: String) {
+    public static func exec(_ args: [String]) -> (status: Int32, output: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: args[0])
         p.arguments = Array(args.dropFirst())
