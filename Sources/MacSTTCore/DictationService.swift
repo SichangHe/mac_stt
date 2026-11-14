@@ -67,6 +67,14 @@ public actor DictationService {
             }
         } catch {
             Self.log("error: \(error.localizedDescription)")
+            if case RecorderError.microphonePermissionDenied = error {
+                // macOS caches the permission per process: granting it in System Settings does not reach
+                // this process, so exit and let the next press start a fresh server that sees the grant.
+                Task.detached {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    exit(0)
+                }
+            }
             return "ERR \(error.localizedDescription)"
         }
     }

@@ -214,6 +214,10 @@ public final class MenuBarApp: NSObject {
             } catch {
                 Self.log("error: \(error.localizedDescription)")
                 NSSound.beep()
+                if error.localizedDescription.contains("microphone access is required") {
+                    NSWorkspace.shared.open(
+                        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
+                }
             }
         }
     }
