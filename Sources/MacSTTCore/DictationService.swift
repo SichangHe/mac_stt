@@ -27,13 +27,8 @@ public actor DictationService {
             }
         }
         Task.detached { [self] in
-            var lastPrune = Date.distantPast
             while true {
                 try? await Task.sleep(for: .seconds(30))
-                if Date().timeIntervalSince(lastPrune) >= 3600 {
-                    LogPrune.pruneAll()
-                    lastPrune = Date()
-                }
                 await self.exitIfIdle()
             }
         }
@@ -46,7 +41,7 @@ public actor DictationService {
     }
 
     static func log(_ message: String) {
-        LogPrune.append(message, to: ControlSocket.logPath)
+        FileHandle.standardError.write(Data("[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n".utf8))
     }
 
     public func handle(_ verb: ControlVerb) async -> String {
@@ -67,14 +62,6 @@ public actor DictationService {
             }
         } catch {
             Self.log("error: \(error.localizedDescription)")
-            if case RecorderError.microphonePermissionDenied = error {
-                // macOS caches the permission per process: granting it in System Settings does not reach
-                // this process, so exit and let the next press start a fresh server that sees the grant.
-                Task.detached {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    exit(0)
-                }
-            }
             return "ERR \(error.localizedDescription)"
         }
     }
@@ -91,7 +78,7 @@ public actor DictationService {
         take = try DictationTake(
             input: input, engine: engine, diarizer: diarizer, language: options.model.language,
             onPartial: { text in
-                Self.log("partial update (\(text.count) chars)")
+                Self.log("partial: \(text)")
                 PartialWindow.update(text)
             })
         PartialWindow.update("")
@@ -108,7 +95,7 @@ public actor DictationService {
         Self.log(
             String(
                 format: "speech_seconds=%.1f finalize_seconds=%.3f", result.speechSeconds, result.finalizeSeconds))
-        try ResultWriter.write(result.document, options: options.output, echo: false)
+        try ResultWriter.write(result.document, options: options.output)
         Earcon.end.play()
         return result.document.rendered
     }

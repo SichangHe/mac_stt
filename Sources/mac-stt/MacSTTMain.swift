@@ -4,39 +4,19 @@ import MacSTTCore
 
 @main
 struct MacSTTMain {
-    static func main() {
-        let command: Command
+    static func main() async {
         do {
-            command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
+            let command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
+            try await run(command)
+            // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
+            // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
+            fflush(stdout)
+            _exit(0)
         } catch {
-            fail(error)
+            FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
+            exit(2)
         }
-        // The app needs a real AppKit main loop, so it runs here, before any async work.
-        if case .app(let hotkey, let foreground) = command {
-            do {
-                if foreground {
-                    MainActor.assumeIsolated { MenuBarApp.run(hotkey: hotkey) }
-                }
-                print(try MenuBarApp.launchDetached(hotkey: hotkey))
-                _exit(0)
-            } catch { fail(error) }
-        }
-        Task {
-            do {
-                try await run(command)
-                // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
-                // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
-                fflush(stdout)
-                _exit(0)
-            } catch { fail(error) }
-        }
-        dispatchMain()
-    }
-
-    private static func fail(_ error: Error) -> Never {
-        FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
-        FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
-        exit(2)
     }
 
     private static func run(_ command: Command) async throws {
@@ -73,16 +53,6 @@ struct MacSTTMain {
             try await Task.sleep(for: .seconds(Double(Int32.max)))
         case .control(let verb):
             print(try await ControlClient.send(verb))
-        case .report:
-            print(try Report.write())
-        case .app:
-            break  // handled in main()
-        case .appInstall(let hotkey):
-            print(try LoginItem.install(hotkey: hotkey))
-        case .appSetup:
-            print(LocalSigning.setUpApp(cli: Bundle.main.executablePath ?? CommandLine.arguments[0]))
-        case .appUninstall:
-            print(LoginItem.uninstall())
         case .transcribe(let options):
             guard options.paths.count == 1 || options.output.outputPath == nil else {
                 throw MainError.oneOutputForMultipleInputs

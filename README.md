@@ -10,17 +10,11 @@ curl -fsSL https://raw.githubusercontent.com/SichangHe/mac_stt/main/install.sh |
 
 The script downloads the latest release, checks its SHA-256, installs `~/.local/bin/mac-stt`, then downloads and verifies the models (about 2.7 GB) and warms Core ML's cache. It needs an Apple Silicon Mac on macOS 14 or newer and no `sudo`. See [requirements](#requirements).
 
-Install with this script. The binary is not notarized (no Apple developer account), so a copy downloaded in a browser is blocked by Gatekeeper; `curl` does not set the quarantine flag, so the script's copy runs.
-
 ## use
 
-1. Run `mac-stt app`: it returns at once and keeps running in the background (log: `~/Library/Application Support/mac-stt/app.log`; a second run does nothing). It adds a menu-bar microphone icon and listens for the microphone key (F5 on recent Apple keyboards). `--hotkey ctrl+opt+d` uses an ordinary combo instead (modifiers ctrl/opt/cmd/shift plus a letter, digit, space, return, tab or F1-F12). `mac-stt app install [--hotkey KEY]` starts it at login via a LaunchAgent; `mac-stt app uninstall` removes it. The app loads no models. When a take finishes it pastes (Command-V) into the focused field.
-   First run: `mac-stt app` uses the signed app `~/Applications/mac-stt.app` that the installer builds (ad-hoc signed, no Apple developer account; after an update macOS treats it as a new program, so remove its old Accessibility/Input Monitoring entries and allow it again). Allow mac-stt under System Settings > Privacy & Security > Input Monitoring and Accessibility (the microphone key is read through an event tap; pasting needs Accessibility), and set System Settings > Keyboard > Dictation > Shortcut to Off so macOS does not also start its own Dictation. Without Accessibility the text is only copied.
-   Alternative: bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Karabiner, Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool); this does not paste.
+1. Bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool).
 2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
 3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.
-
-Problems: `mac-stt report` saves recent `serve`/`app` logs (kept in `~/Library/Application Support/mac-stt/`), macOS and hardware details and permission states into one text file, then opens a prefilled GitHub issue; drag the file in and submit. Logs prune themselves: each log rotates to `.1` past 2 MiB (at most 2 files per log), entries older than 14 days are dropped hourly, and only the newest 5 reports are kept; limits are constants in `LogPrune.swift`. Nothing is uploaded automatically, and dictated partial text is redacted from the log copy.
 
 Other commands:
 

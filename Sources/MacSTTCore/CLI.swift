@@ -63,14 +63,9 @@ public enum ControlVerb: String, CaseIterable, Sendable {
 public enum Command: Equatable, Sendable {
     case help
     case doctor
-    case report
     case setup(ModelOptions)
     case serve(ServeOptions)
     case control(ControlVerb)
-    case app(hotkey: Hotkey, foreground: Bool)
-    case appInstall(hotkey: Hotkey)
-    case appUninstall
-    case appSetup
     case transcribe(TranscribeOptions)
     case record(RecordOptions)
     case profileModels(paths: [String], compute: ComputePolicy)
@@ -104,9 +99,6 @@ public enum CLIParser {
         let rest = Array(arguments.dropFirst())
         switch name {
         case "help", "--help", "-h": return .help
-        case "report":
-            guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
-            return .report
         case "doctor":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .doctor
@@ -118,34 +110,6 @@ public enum CLIParser {
             let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
             guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
             return .serve(ServeOptions(model: parsed.model, output: parsed.output))
-        case "app":
-            var rest = rest
-            var mode = "run"
-            if let first = rest.first, first == "install" || first == "uninstall" || first == "setup" {
-                mode = first
-                rest.removeFirst()
-            }
-            var spec = Hotkey.defaultSpec
-            var foreground = false
-            var i = 0
-            while i < rest.count {
-                switch rest[i] {
-                case "--hotkey":
-                    guard i + 1 < rest.count else { throw CLIError.missingValue("--hotkey") }
-                    spec = rest[i + 1]
-                    i += 1
-                case "--foreground": foreground = true
-                default: throw CLIError.unknownOption(rest[i])
-                }
-                i += 1
-            }
-            let key = try Hotkey(spec)
-            switch mode {
-            case "install": return .appInstall(hotkey: key)
-            case "uninstall": return .appUninstall
-            case "setup": return .appSetup
-            default: return .app(hotkey: key, foreground: foreground)
-            }
         case "toggle", "start", "stop", "status", "quit":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .control(ControlVerb(rawValue: name)!)
@@ -254,23 +218,16 @@ usage:
   mac-stt start | stop                  start or stop recording explicitly
   mac-stt status                        report whether `serve` is idle or recording
   mac-stt quit                          exit the background `serve` (it also exits after 10 min idle)
-  mac-stt app [--hotkey KEY]            menu-bar icon + global key, runs in the background; pastes on finish
-                                        KEY: dictation (mic key, default) or e.g. ctrl+opt+d, cmd+shift+space, ctrl+f5
-  mac-stt app install | uninstall       start the app at login (LaunchAgent) or stop doing so
-  mac-stt app setup                     (re)build ~/Applications/mac-stt.app, the signed app that
-                                        macOS lists under Accessibility/Input Monitoring; the installer runs this
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]
   mac-stt doctor
-  mac-stt report                        save logs + system info to one file and open a prefilled GitHub issue
-                                        (nothing is uploaded; background logs: ~/Library/Application Support/mac-stt/)
 
 options: --model 1.7b|0.6b  --language CODE (default: detect)  --compute ane|gpu|cpu|all
          --no-clipboard  -o PATH  --input-speed N (record --input pacing, default 1)
 
-`mac-stt app` needs no hotkey tool; pasting needs Accessibility permission (asked once).
-Alternatively bind `mac-stt toggle` to a key with any hotkey tool (Shortcuts, skhd, Karabiner, Raycast). The first `toggle` starts `serve` in the background if it is not running.
+Bind `mac-stt toggle` to a key with any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon,
+BetterTouchTool). The first `toggle` starts `serve` in the background if it is not running.
 Compute `ane` means the audio encoder may use CPU and Neural Engine and the decoder CPU and GPU.
 That is a configuration, not proof of placement: use `profile-model` and `powermetrics`.
 """
