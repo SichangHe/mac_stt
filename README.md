@@ -12,7 +12,7 @@ The script downloads the latest release, checks its SHA-256, installs `~/.local/
 
 ## use
 
-1. Bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool (Shortcuts, skhd, Raycast, Hammerspoon, BetterTouchTool).
+1. Bind `~/.local/bin/mac-stt toggle` to a key in any hotkey tool. Recipes for Shortcuts, AppleScript, Karabiner-Elements, Hammerspoon, skhd, Raycast, and BetterTouchTool: [docs/key-bindings.md](docs/key-bindings.md).
 2. First press: starts recording (a background `mac-stt serve` starts on demand and keeps the models warm). macOS asks once for microphone access.
 3. Second press: stops, transcribes the tail, copies the text to the clipboard, and prints it.
 
