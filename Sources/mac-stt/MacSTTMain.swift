@@ -5,19 +5,54 @@ import MacSTTCore
 
 @main
 struct MacSTTMain {
-    static func main() async {
+    static func main() {
+        let command: Command
         do {
-            let command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
-            try await run(command)
-            // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
-            // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
-            fflush(stdout)
-            _exit(0)
+            command = try CLIParser.parse(Array(CommandLine.arguments.dropFirst()))
+            // `serve` runs AppKit's event loop on the main thread (window, copy key); it also runs the main
+            // actor's jobs. Blocking the main thread inside an async main would deadlock the main actor.
+            if case .serve(let options) = command {
+                try MainActor.assumeIsolated { try startServe(options) }
+                NSApplication.shared.run()
+                exit(0)
+            }
         } catch {
-            FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
-            FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
-            exit(2)
+            fail(error)
         }
+        Task {
+            do {
+                try await run(command)
+                // Skip C++ static destructors: MLX's Metal state is torn down while its worker thread may still
+                // finish a cancelled partial transcription, which segfaulted live dictation at exit on macOS 15.
+                fflush(stdout)
+                _exit(0)
+            } catch {
+                fail(error)
+            }
+        }
+        dispatchMain()
+    }
+
+    private static func fail(_ error: any Error) -> Never {
+        FileHandle.standardError.write(Data("error: \(error.localizedDescription)\n".utf8))
+        FileHandle.standardError.write(Data("run `mac-stt help` for usage\n".utf8))
+        exit(2)
+    }
+
+    @MainActor
+    private static func startServe(_ options: ServeOptions) throws {
+        signal(SIGPIPE, SIG_IGN)
+        let service = DictationService(options: options)
+        let server = ControlServer(
+            handler: { verb in await service.handle(verb) },
+            jobHandler: { body, fd in await service.job(body, fd: fd) })
+        try server.start()
+        FileHandle.standardError.write(Data("mac-stt serve listening on \(ControlSocket.path)\n".utf8))
+        let window = TranscriptWindow.shared
+        window.onToggle = { await service.handle(.toggle) }
+        window.onCopy = { await service.handle(.copy) }
+        if let key = options.copyKey { window.registerCopyKey(key) }
+        NSApplication.shared.setActivationPolicy(.accessory)
     }
 
     private static func run(_ command: Command) async throws {
@@ -45,23 +80,8 @@ struct MacSTTMain {
             let warm = Date()
             _ = try await loaded.transcribe([Float](repeating: 0, count: 16_000))
             print(String(format: "setup complete: models ready in %.1f s, first inference %.2f s", load, Date().timeIntervalSince(warm)))
-        case .serve(let options):
-            signal(SIGPIPE, SIG_IGN)
-            let service = DictationService(options: options)
-            let server = ControlServer(
-                handler: { verb in await service.handle(verb) },
-                jobHandler: { body, fd in await service.job(body, fd: fd) })
-            try server.start()
-            FileHandle.standardError.write(Data("mac-stt serve listening on \(ControlSocket.path)\n".utf8))
-            // The transcript window and the copy key need AppKit's event loop on the main thread.
-            await MainActor.run {
-                let window = TranscriptWindow.shared
-                window.onToggle = { await service.handle(.toggle) }
-                window.onCopy = { await service.handle(.copy) }
-                if let key = options.copyKey { window.registerCopyKey(key) }
-                NSApplication.shared.setActivationPolicy(.accessory)
-                NSApplication.shared.run()
-            }
+        case .serve:
+            break  // handled in main()
         case .control(let verb):
             print(try await ControlClient.send(verb))
         case .transcribe(let options):
