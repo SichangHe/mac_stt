@@ -2,8 +2,8 @@
 # Short feature checks on Apple Silicon macOS using a released or built binary.
 # usage: scripts/e2e-features OUT_DIR [BINARY]
 set -eu
-out=$1
-mkdir -p "$out"
+mkdir -p "$1"
+out=$(cd "$1" && pwd)
 bin=${2:-dist/mac-stt}
 speech=tests/data/librispeech-dev-clean-240s
 export MAC_STT_TRACE=1
@@ -25,7 +25,10 @@ limit 600 "$bin" transcribe "$out/in6.wav" --no-clipboard >/dev/null 2>&1
 limit 600 "$bin" transcribe "$out/in6.wav" >"$out/clip.stdout" 2>/dev/null
 [ "$(pbpaste)" = "$(cat "$out/clip.stdout")" ] && note "clipboard default: PASS: $(pbpaste)" || note "clipboard default: FAIL"
 
-# 2. toggle flow; a WAV file stands in for the microphone, paced at real time through the same pipeline
+# 2. toggle flow; a WAV file stands in for the microphone, paced at real time through the same pipeline.
+# `serve` reads MAC_STT_FAKE_MIC when it starts, so restart the one `transcribe` started.
+"$bin" quit >/dev/null || true
+sleep 1
 export MAC_STT_FAKE_MIC="$out/in14.wav"
 printf 'sentinel' | pbcopy
 note "toggle 1: $(limit 600 "$bin" toggle)"
@@ -38,6 +41,8 @@ note "toggle 2 returned after $(python3 -I -c "print('%.1f' % ($t1 - $t0))") s w
 note "toggle WER: $(python3 -I scripts/wavtool.py wer "$out/ref14.txt" "$out/toggle.txt") %"
 
 # 3. recording is not blocked by a transcription still running
+"$bin" quit >/dev/null || true
+sleep 1
 export MAC_STT_FAKE_MIC="$out/in6.wav"
 "$bin" toggle >/dev/null
 sleep 8
