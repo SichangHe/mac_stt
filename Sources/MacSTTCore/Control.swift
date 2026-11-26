@@ -51,12 +51,7 @@ public enum ControlClient {
     public static func send(_ verb: ControlVerb) async throws -> String {
         var fd = ControlSocket.connectClient()
         if fd == nil, verb == .toggle || verb == .start || verb == .show {
-            try launchServer()
-            for _ in 0..<300 {
-                fd = ControlSocket.connectClient()
-                if fd != nil { break }
-                try await Task.sleep(for: .milliseconds(100))
-            }
+            fd = try await launchAndConnect()
         }
         guard let fd else {
             if verb == .status { return "not running" }
@@ -79,11 +74,21 @@ public enum ControlClient {
         return text
     }
 
+    /// Starts `serve` with `arguments` and waits up to 30 s for its socket.
+    static func launchAndConnect(arguments: [String] = []) async throws -> Int32? {
+        try launchServer(arguments: arguments)
+        for _ in 0..<300 {
+            if let fd = ControlSocket.connectClient() { return fd }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return nil
+    }
+
     /// Starts `serve` detached and as its own TCC "responsible process" (posix_spawn with the
     /// responsibility disclaim attribute). Otherwise macOS attributes microphone access to whatever
     /// launched `toggle` (Karabiner, a hotkey app), which has no microphone permission and cannot be
     /// added in System Settings; disclaimed, macOS asks once for mac-stt itself.
-    private static func launchServer() throws {
+    private static func launchServer(arguments: [String] = []) throws {
         try FileManager.default.createDirectory(at: ControlSocket.directory, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: ControlSocket.logPath, contents: nil)
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
@@ -105,7 +110,7 @@ public enum ControlClient {
         // Run from the home directory: hotkey tools start commands in the read-only "/".
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         posix_spawn_file_actions_addchdir_np(&actions, home)
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(executable), strdup("serve"), nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = ([executable, "serve"] + arguments).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0
         let status = posix_spawn(&pid, executable, &actions, &attributes, argv, environ)
@@ -118,10 +123,16 @@ public enum ControlClient {
 /// Minimal blocking Unix-socket server; each connection carries one verb line.
 public final class ControlServer: @unchecked Sendable {
     private let handler: @Sendable (ControlVerb) async -> String
+    /// Handles a `JOB {json}` line; owns the connection until it returns.
+    private let jobHandler: (@Sendable (Data, Int32) async -> Void)?
     private var descriptor: Int32 = -1
 
-    public init(handler: @escaping @Sendable (ControlVerb) async -> String) {
+    public init(
+        handler: @escaping @Sendable (ControlVerb) async -> String,
+        jobHandler: (@Sendable (Data, Int32) async -> Void)? = nil
+    ) {
         self.handler = handler
+        self.jobHandler = jobHandler
     }
 
     public func start() throws {
@@ -144,6 +155,7 @@ public final class ControlServer: @unchecked Sendable {
         chmod(ControlSocket.path, 0o600)
         let listener = descriptor
         let handler = self.handler
+        let jobHandler = self.jobHandler
         Thread.detachNewThread {
             while true {
                 let client = accept(listener, nil, nil)
@@ -151,7 +163,12 @@ public final class ControlServer: @unchecked Sendable {
                 Task.detached {
                     var line: [UInt8] = []
                     var byte: UInt8 = 0
-                    while line.count < 32, read(client, &byte, 1) == 1, byte != 10 { line.append(byte) }
+                    while line.count < 1 << 20, read(client, &byte, 1) == 1, byte != 10 { line.append(byte) }
+                    if let jobHandler, line.starts(with: Array("JOB ".utf8)) {
+                        await jobHandler(Data(line.dropFirst(4)), client)
+                        close(client)
+                        return
+                    }
                     let word = String(decoding: line, as: UTF8.self)
                     let reply: String
                     if let verb = ControlVerb(rawValue: word) {

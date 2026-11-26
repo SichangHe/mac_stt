@@ -48,7 +48,9 @@ struct MacSTTMain {
         case .serve(let options):
             signal(SIGPIPE, SIG_IGN)
             let service = DictationService(options: options)
-            let server = ControlServer { verb in await service.handle(verb) }
+            let server = ControlServer(
+                handler: { verb in await service.handle(verb) },
+                jobHandler: { body, fd in await service.job(body, fd: fd) })
             try server.start()
             FileHandle.standardError.write(Data("mac-stt serve listening on \(ControlSocket.path)\n".utf8))
             // The transcript window and the copy key need AppKit's event loop on the main thread.
@@ -66,62 +68,34 @@ struct MacSTTMain {
             guard options.paths.count == 1 || options.output.outputPath == nil else {
                 throw MainError.oneOutputForMultipleInputs
             }
-            let model = options.model
-            let engine = Qwen3Runtime.engineTask(variant: model.variant, compute: model.compute)
-            let diarizer = model.diarize ? Qwen3Runtime.diarizerTask(compute: model.compute) : nil
-            let diarizerModels = try await diarizer?.value
-            let documents = try await ConcurrentProcessor.map(options.paths) { path in
-                try await Qwen3Runtime.transcribeFile(
-                    path: path, engineTask: engine, diarizer: diarizerModels, language: model.language)
+            // Runs inside `serve` so every command shares one copy of the models.
+            var request = JobRequest(kind: .transcribe, model: options.model)
+            request.paths = options.paths.map { absolute($0) }
+            let result = try await JobClient.run(request, onPartial: { _ in })
+            for file in result.files {
+                FileHandle.standardError.write(Data(String(format: "%@: processed in %.2f s\n", file.path, file.seconds).utf8))
             }
-            let document: TranscriptDocument
-            if documents.count == 1 {
-                document = documents[0]
-            } else {
-                let text = zip(options.paths, documents).map { path, result in
-                    "== \(path) ==\n\(result.rendered)"
-                }.joined(separator: "\n\n")
-                document = TranscriptDocument(text: text)
-            }
-            for (path, result) in zip(options.paths, documents) {
-                FileHandle.standardError.write(
-                    Data(String(format: "%@: processed in %.2f s\n", path, result.processingSeconds).utf8))
-            }
-            try ResultWriter.write(document, options: options.output)
+            let text = result.files.count == 1
+                ? result.files[0].rendered
+                : zip(options.paths, result.files).map { "== \($0) ==\n\($1.rendered)" }.joined(separator: "\n\n")
+            try ResultWriter.write(TranscriptDocument(text: text), options: options.output)
         case .record(let options):
-            let model = options.model
-            let engine = Qwen3Runtime.engineTask(variant: model.variant, compute: model.compute)
-            let diarizer = model.diarize ? Qwen3Runtime.diarizerTask(compute: model.compute) : nil
-            let input: AudioInput
-            if let path = options.inputPath {
-                input = .file(path: path, speed: options.inputSpeed)
-            } else {
-                try await MicrophonePermission.require()
-                input = .microphone
-            }
+            var request = JobRequest(kind: .record, model: options.model)
+            request.input = options.inputPath.map { absolute($0) }
+            request.speed = options.inputSpeed
             let interrupt = InterruptWaiter()
-            let take = try DictationTake(
-                input: input, engine: engine, diarizer: diarizer, language: model.language,
-                onPartial: { text in
-                    FileHandle.standardError.write(Data("\r\u{001B}[2K\(text)".utf8))
-                })
             FileHandle.standardError.write(
                 Data((options.inputPath == nil ? "recording; press Control-C to finish\n" : "streaming input\n").utf8))
-            if options.inputPath != nil {
-                Task {
-                    try? await take.waitForInputEnd()
-                    interrupt.trigger()
-                }
-            }
-            await interrupt.wait()
-            let result = try await take.stop()
+            let result = try await JobClient.run(
+                request, stop: { await interrupt.wait() },
+                onPartial: { text in FileHandle.standardError.write(Data("\r\u{001B}[2K\(text)".utf8)) })
             FileHandle.standardError.write(
                 Data(
                     String(
                         format: "\nspeech_seconds=%.1f finalize_seconds=%.3f\n", result.speechSeconds,
                         result.finalizeSeconds
                     ).utf8))
-            try ResultWriter.write(result.document, options: options.output)
+            try ResultWriter.write(TranscriptDocument(text: result.rendered), options: options.output)
         case .profileModels(let paths, let compute):
             print("policy: \(compute.explanation)")
             for report in try await ModelProfiler.profile(paths: paths, compute: compute) {
@@ -130,6 +104,12 @@ struct MacSTTMain {
             print("claim boundary: this is Core ML's preferred placement plan, not observed runtime execution")
         }
     }
+}
+
+/// `serve` runs from the home directory, so paths sent to it must be absolute.
+private func absolute(_ path: String) -> String {
+    let expanded = (path as NSString).expandingTildeInPath
+    return expanded.hasPrefix("/") ? expanded : FileManager.default.currentDirectoryPath + "/" + expanded
 }
 
 private enum MainError: Error, LocalizedError {

@@ -14,6 +14,8 @@ public actor DictationService {
     /// The server exits after this long with no recording and no command, to free memory and the models.
     static let idleExitSeconds: TimeInterval = 600
     private var lastActivity = Date()
+    /// `transcribe`/`record` jobs from other mac-stt commands now running here.
+    private var jobs = 0
 
     public init(options: ServeOptions) {
         self.options = options
@@ -38,7 +40,7 @@ public actor DictationService {
     }
 
     private func exitIfIdle() {
-        guard take == nil, !transcript.windowVisible, Date().timeIntervalSince(lastActivity) >= Self.idleExitSeconds else { return }
+        guard take == nil, jobs == 0, !transcript.windowVisible, Date().timeIntervalSince(lastActivity) >= Self.idleExitSeconds else { return }
         Self.log("idle for \(Int(Self.idleExitSeconds)) s; exiting")
         exit(0)
     }
@@ -123,6 +125,97 @@ public actor DictationService {
         try ResultWriter.write(result.document, options: options.output)
         Earcon.end.play()
         return result.document.rendered
+    }
+
+    private func diarizerTask() -> Task<DiarizerModels, Error> {
+        if let diarizer { return diarizer }
+        let task = Qwen3Runtime.diarizerTask(compute: options.model.compute)
+        diarizer = task
+        return task
+    }
+
+    private func jobStarted() { jobs += 1; lastActivity = Date() }
+    private func jobEnded() { jobs -= 1; lastActivity = Date() }
+
+    /// Runs a `transcribe` or `record` job for another mac-stt command on this server's models.
+    public nonisolated func job(_ body: Data, fd: Int32) async {
+        let connection = JobConnection(fd: fd)
+        await jobStarted()
+        do {
+            let request = try JSONDecoder().decode(JobRequest.self, from: body)
+            let result = try await run(request, connection: connection)
+            connection.send("D", result)
+        } catch {
+            Self.log("job error: \(error.localizedDescription)")
+            connection.send("E", JobText(text: error.localizedDescription))
+        }
+        await jobEnded()
+    }
+
+    private func run(_ request: JobRequest, connection: JobConnection) async throws -> JobResult {
+        let model = options.model
+        guard request.variant == model.variant.rawValue, request.compute == model.compute.rawValue else {
+            throw ControlError.serverFailed(
+                "mac-stt serve runs --model \(model.variant.rawValue) --compute \(model.compute.rawValue); "
+                    + "use those, or `mac-stt quit` first so it restarts with yours")
+        }
+        let diarizer = request.diarize ? diarizerTask() : nil
+        let engine = self.engine
+        switch request.kind {
+        case .transcribe:
+            let models = try await diarizer?.value
+            let documents = try await ConcurrentProcessor.map(request.paths) { path in
+                try await Qwen3Runtime.transcribeFile(
+                    path: path, engineTask: engine, diarizer: models, language: request.language)
+            }
+            var result = JobResult()
+            result.files = zip(request.paths, documents).map {
+                JobFile(path: $0, rendered: $1.rendered, seconds: $1.processingSeconds)
+            }
+            return result
+        case .record:
+            let input: AudioInput
+            if let path = request.input {
+                input = .file(path: path, speed: request.speed)
+            } else {
+                try await MicrophonePermission.require()
+                input = .microphone
+            }
+            let transcript = self.transcript
+            let index = transcript.mutate { $0.beginTake() }
+            let take = try DictationTake(
+                input: input, engine: engine, diarizer: diarizer, language: request.language,
+                onPartial: { connection.send("P", JobText(text: $0)) },
+                onTail: { tail in transcript.mutate { $0.setTail(take: index, tail) } },
+                onPieces: { pieces in transcript.mutate { $0.update(take: index, pieces: pieces) } })
+            // Stop when the client sends a byte or disconnects, or when a file input ends.
+            let (signal, trigger) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+            Thread.detachNewThread {
+                var byte: UInt8 = 0
+                _ = read(connection.fd, &byte, 1)
+                trigger.yield()
+            }
+            let inputEnd = request.input == nil ? nil : Task {
+                try? await take.waitForInputEnd()
+                trigger.yield()
+            }
+            for await _ in signal { break }
+            inputEnd?.cancel()
+            transcript.mutate { $0.setTail(take: index, nil) }
+            let finished: DictationResult
+            do {
+                finished = try await take.stop()
+            } catch {
+                transcript.mutate { $0.finish(take: index, pieces: $0.takes[index].pieces) }
+                throw error
+            }
+            transcript.mutate { $0.finish(take: index, pieces: finished.pieces) }
+            var result = JobResult()
+            result.rendered = finished.document.rendered
+            result.speechSeconds = finished.speechSeconds
+            result.finalizeSeconds = finished.finalizeSeconds
+            return result
+        }
     }
 
     /// Copies the transcript text not copied before to the clipboard and returns it.
