@@ -38,10 +38,12 @@ public final class DictationTake: @unchecked Sendable {
     ) throws {
         self.engine = engine
         self.language = language
-        let live = onPieces.map { LiveLabels(diarized: diarizer != nil, publish: $0) }
+        let live: LiveLabels? = onPieces == nil ? nil : LiveLabels(diarized: diarizer != nil, publish: onPieces!)
+        var onSegment: (@Sendable (SpeechSegment) -> Void)? = nil
+        if let labels = live { onSegment = { segment in labels.add(segment) } }
         session = Qwen3Session(
             engine: engine, language: language, keepAudio: diarizer != nil, onPartial: onPartial,
-            onTail: onTail, onSegment: live.map { live in { live.add($0) } })
+            onTail: onTail, onSegment: onSegment)
         let stream: AsyncThrowingStream<AVAudioPCMBuffer, Error>
         switch input {
         case .microphone:
