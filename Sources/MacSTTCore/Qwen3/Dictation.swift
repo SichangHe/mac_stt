@@ -10,6 +10,8 @@ public enum AudioInput: Sendable {
 
 public struct DictationResult: Sendable {
     public let document: TranscriptDocument
+    /// The document before merging lines: one piece per segment or speaker turn.
+    public let pieces: [TranscriptLine]
     public let speechSeconds: Double
     /// Time from the last captured sample to the final text.
     public let finalizeSeconds: Double
@@ -30,12 +32,16 @@ public final class DictationTake: @unchecked Sendable {
         engine: Task<any Qwen3Engine, Error>,
         diarizer: Task<DiarizerModels, Error>?,
         language: String?,
-        onPartial: (@Sendable (String) -> Void)?
+        onPartial: (@Sendable (String) -> Void)?,
+        onTail: (@Sendable (String) -> Void)? = nil,
+        onPieces: (@Sendable ([TranscriptLine]) -> Void)? = nil
     ) throws {
         self.engine = engine
         self.language = language
+        let live = onPieces.map { LiveLabels(diarized: diarizer != nil, publish: $0) }
         session = Qwen3Session(
-            engine: engine, language: language, keepAudio: diarizer != nil, onPartial: onPartial)
+            engine: engine, language: language, keepAudio: diarizer != nil, onPartial: onPartial,
+            onTail: onTail, onSegment: live.map { live in { live.add($0) } })
         let stream: AsyncThrowingStream<AVAudioPCMBuffer, Error>
         switch input {
         case .microphone:
@@ -51,7 +57,10 @@ public final class DictationTake: @unchecked Sendable {
                 capacity: 360, overflowError: RecorderError.diarizationOverrun
             ) { chunks in
                 let incremental = IncrementalDiarizer(models: try await models.value)
-                for try await chunk in chunks { try incremental.process(chunk) }
+                for try await chunk in chunks {
+                    try incremental.process(chunk)
+                    live?.setSpans(incremental.spans, coveredSeconds: Double(incremental.processedSamples) / 16_000)
+                }
                 return incremental.spans
             }
         }
@@ -81,16 +90,61 @@ public final class DictationTake: @unchecked Sendable {
         let speech = Double(session.samplesReceived) / 16_000
         let segments = try await session.finish()
         let document: TranscriptDocument
+        let pieces: [TranscriptLine]
         if let diarization {
             let spans = try await diarization.finish()
-            document = try await SpeakerLabeler.document(
+            pieces = try await SpeakerLabeler.pieces(
                 segments: segments, spans: spans, audio: session.recordedAudio(),
                 engine: try await engine.value, language: language)
+            document = SpeakerLabeler.document(pieces: pieces)
         } else {
+            pieces = segments.map { TranscriptLine(segment: $0, speaker: "") }
             document = TranscriptDocument(text: segments.map(\.text).joined(separator: " "))
         }
         return DictationResult(
-            document: document, speechSeconds: speech, finalizeSeconds: Date().timeIntervalSince(ended))
+            document: document, pieces: pieces, speechSeconds: speech, finalizeSeconds: Date().timeIntervalSince(ended))
+    }
+}
+
+/// Labels each finished segment while recording, from the diarizer spans seen so far, and publishes
+/// the whole list on every change.
+final class LiveLabels: @unchecked Sendable {
+    private let lock = NSLock()
+    private let diarized: Bool
+    private let publish: @Sendable ([TranscriptLine]) -> Void
+    private var segments: [SpeechSegment] = []
+    private var spans: [SpeakerSpan] = []
+    private var covered = 0.0
+
+    init(diarized: Bool, publish: @escaping @Sendable ([TranscriptLine]) -> Void) {
+        self.diarized = diarized
+        self.publish = publish
+    }
+
+    func add(_ segment: SpeechSegment) {
+        lock.lock()
+        segments.append(segment)
+        segments.sort { $0.startSample < $1.startSample }
+        // Published under the lock so updates arrive in order.
+        publish(labeled())
+        lock.unlock()
+    }
+
+    func setSpans(_ spans: [SpeakerSpan], coveredSeconds: Double) {
+        lock.lock()
+        self.spans = spans
+        covered = coveredSeconds
+        // Published under the lock so updates arrive in order.
+        publish(labeled())
+        lock.unlock()
+    }
+
+    private func labeled() -> [TranscriptLine] {
+        segments.filter { !$0.text.isEmpty }.map { segment in
+            let speaker = diarized
+                ? SpeakerLabeler.liveSpeaker(for: segment, spans: spans, coveredSeconds: covered) : ""
+            return TranscriptLine(segment: segment, speaker: speaker)
+        }
     }
 }
 

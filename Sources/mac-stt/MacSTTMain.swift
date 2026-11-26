@@ -1,3 +1,4 @@
+import AppKit
 @preconcurrency import CoreML
 import Foundation
 import MacSTTCore
@@ -50,7 +51,15 @@ struct MacSTTMain {
             let server = ControlServer { verb in await service.handle(verb) }
             try server.start()
             FileHandle.standardError.write(Data("mac-stt serve listening on \(ControlSocket.path)\n".utf8))
-            try await Task.sleep(for: .seconds(Double(Int32.max)))
+            // The transcript window and the copy key need AppKit's event loop on the main thread.
+            await MainActor.run {
+                let window = TranscriptWindow.shared
+                window.onToggle = { await service.handle(.toggle) }
+                window.onCopy = { await service.handle(.copy) }
+                if let key = options.copyKey { window.registerCopyKey(key) }
+                NSApplication.shared.setActivationPolicy(.accessory)
+                NSApplication.shared.run()
+            }
         case .control(let verb):
             print(try await ControlClient.send(verb))
         case .transcribe(let options):

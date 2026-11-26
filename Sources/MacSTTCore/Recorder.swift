@@ -230,7 +230,7 @@ struct DiarizationChunker {
 final class IncrementalDiarizer {
     private static let sampleRate = 16_000
     private let manager: DiarizerManager
-    private var processedSamples = 0
+    private(set) var processedSamples = 0
     private(set) var spans: [SpeakerSpan] = []
 
     init(models: DiarizerModels) {

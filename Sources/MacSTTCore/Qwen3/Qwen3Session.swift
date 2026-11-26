@@ -21,6 +21,8 @@ public final class Qwen3Session: @unchecked Sendable {
     private let language: String?
     private let keepAudio: Bool
     private let onPartial: (@Sendable (String) -> Void)?
+    private let onTail: (@Sendable (String) -> Void)?
+    private let onSegment: (@Sendable (SpeechSegment) -> Void)?
 
     private let lock = NSLock()
     private var pending: [Float] = []
@@ -35,12 +37,16 @@ public final class Qwen3Session: @unchecked Sendable {
 
     public init(
         engine: Task<any Qwen3Engine, Error>, language: String?, keepAudio: Bool,
-        onPartial: (@Sendable (String) -> Void)? = nil
+        onPartial: (@Sendable (String) -> Void)? = nil,
+        onTail: (@Sendable (String) -> Void)? = nil,
+        onSegment: (@Sendable (SpeechSegment) -> Void)? = nil
     ) {
         self.engine = engine
         self.language = language
         self.keepAudio = keepAudio
         self.onPartial = onPartial
+        self.onTail = onTail
+        self.onSegment = onSegment
     }
 
     public var samplesReceived: Int {
@@ -57,7 +63,7 @@ public final class Qwen3Session: @unchecked Sendable {
         updateNoiseFloor(samples)
         while let cut = nextCut() { commit(upTo: cut) }
         let wantsPartial =
-            onPartial != nil && partialTask == nil && pending.count >= Self.rate
+            (onPartial != nil || onTail != nil) && partialTask == nil && pending.count >= Self.rate
             && Date().timeIntervalSince(lastPartial) >= Self.partialInterval
         if wantsPartial { startPartial() }
         lock.unlock()
@@ -143,11 +149,14 @@ public final class Qwen3Session: @unchecked Sendable {
         let index = tasks.count
         let engine = self.engine
         let language = self.language
+        let onSegment = self.onSegment
         tasks.append(
             Task.detached(priority: .userInitiated) { [weak self] in
                 let text = try await engine.value.transcribe(audio, language: language)
                 self?.recordFinished(index, text)
-                return SpeechSegment(startSample: start, endSample: start + audio.count, text: text)
+                let segment = SpeechSegment(startSample: start, endSample: start + audio.count, text: text)
+                onSegment?(segment)
+                return segment
             })
     }
 
@@ -164,9 +173,11 @@ public final class Qwen3Session: @unchecked Sendable {
         let engine = self.engine
         let language = self.language
         let callback = onPartial
+        let tailCallback = onTail
         partialTask = Task.detached(priority: .utility) { [weak self] in
             if let text = try? await engine.value.transcribe(snapshot, language: language), !Task.isCancelled {
                 callback?((done + [text]).joined(separator: " "))
+                tailCallback?(text)
             }
             self?.clearPartial()
         }

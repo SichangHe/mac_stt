@@ -20,6 +20,13 @@ public struct TranscriptLine: Equatable, Sendable {
     public let startSeconds: Double
     public let endSeconds: Double
     public let text: String
+
+    public init(speaker: String, startSeconds: Double, endSeconds: Double, text: String) {
+        self.speaker = speaker
+        self.startSeconds = startSeconds
+        self.endSeconds = endSeconds
+        self.text = text
+    }
 }
 
 public struct TranscriptDocument: Equatable, Sendable {

@@ -16,16 +16,37 @@ public enum SpeakerLabeler {
         engine: any Qwen3Engine,
         language: String?
     ) async throws -> TranscriptDocument {
+        document(pieces: try await pieces(segments: segments, spans: spans, audio: audio, engine: engine, language: language))
+    }
+
+    /// Merges consecutive pieces of one speaker into lines.
+    public static func document(pieces: [TranscriptLine]) -> TranscriptDocument {
+        var lines: [TranscriptLine] = []
+        for piece in pieces where !piece.text.isEmpty {
+            if let last = lines.last, last.speaker == piece.speaker {
+                lines[lines.count - 1] = TranscriptLine(
+                    speaker: piece.speaker, startSeconds: last.startSeconds, endSeconds: piece.endSeconds,
+                    text: last.text + " " + piece.text)
+            } else {
+                lines.append(piece)
+            }
+        }
+        let text = lines.map(\.text).joined(separator: " ")
+        return TranscriptDocument(text: text, lines: lines)
+    }
+
+    /// One labeled piece per segment, or per speaker turn inside a segment with a speaker change.
+    public static func pieces(
+        segments: [SpeechSegment],
+        spans: [SpeakerSpan],
+        audio: [Float],
+        engine: any Qwen3Engine,
+        language: String?
+    ) async throws -> [TranscriptLine] {
         var lines: [TranscriptLine] = []
         func add(_ speaker: String, _ start: Double, _ end: Double, _ text: String) {
             guard !text.isEmpty else { return }
-            if let last = lines.last, last.speaker == speaker {
-                lines[lines.count - 1] = TranscriptLine(
-                    speaker: speaker, startSeconds: last.startSeconds, endSeconds: end,
-                    text: last.text + " " + text)
-            } else {
-                lines.append(TranscriptLine(speaker: speaker, startSeconds: start, endSeconds: end, text: text))
-            }
+            lines.append(TranscriptLine(speaker: speaker, startSeconds: start, endSeconds: end, text: text))
         }
         for segment in segments {
             let pieces = turns(in: segment, spans: spans)
@@ -40,8 +61,19 @@ public enum SpeakerLabeler {
                 add(piece.speaker, piece.start, piece.end, text)
             }
         }
-        let text = lines.map(\.text).joined(separator: " ")
-        return TranscriptDocument(text: text, lines: lines)
+        return lines
+    }
+
+    /// Live label for a finished segment: the speaker overlapping it most, `TranscriptLine.pending`
+    /// while diarization has not reached its end, "unknown" when no speaker overlaps it.
+    public static func liveSpeaker(for segment: SpeechSegment, spans: [SpeakerSpan], coveredSeconds: Double) -> String {
+        guard coveredSeconds >= segment.endSeconds else { return TranscriptLine.pending }
+        var overlap: [String: Double] = [:]
+        for span in spans {
+            let amount = min(span.endSeconds, segment.endSeconds) - max(span.startSeconds, segment.startSeconds)
+            if amount > 0 { overlap[span.speaker, default: 0] += amount }
+        }
+        return overlap.max { $0.value < $1.value }?.key ?? "unknown"
     }
 
     private static func turns(in segment: SpeechSegment, spans: [SpeakerSpan]) -> [Piece] {
