@@ -1,4 +1,3 @@
-import AppKit
 import FluidAudio
 import Foundation
 
@@ -9,8 +8,6 @@ public actor DictationService {
     private let engine: Task<any Qwen3Engine, Error>
     private var diarizer: Task<DiarizerModels, Error>?
     private var take: DictationTake?
-    private var takeIndex = 0
-    private let transcript = SharedTranscript.shared
     /// The server exits after this long with no recording and no command, to free memory and the models.
     static let idleExitSeconds: TimeInterval = 600
     private var lastActivity = Date()
@@ -40,7 +37,7 @@ public actor DictationService {
     }
 
     private func exitIfIdle() {
-        guard take == nil, jobs == 0, !transcript.windowVisible, Date().timeIntervalSince(lastActivity) >= Self.idleExitSeconds else { return }
+        guard take == nil, jobs == 0, Date().timeIntervalSince(lastActivity) >= Self.idleExitSeconds else { return }
         Self.log("idle for \(Int(Self.idleExitSeconds)) s; exiting")
         exit(0)
     }
@@ -58,12 +55,6 @@ public actor DictationService {
             case .start: return take == nil ? try await start() : "already recording"
             case .stop: return take == nil ? "not recording" : try await stop()
             case .status: return take == nil ? "idle" : "recording"
-            case .show:
-                // Per-speaker lines need the diarizer; load it once the window is used.
-                if diarizer == nil { diarizer = Qwen3Runtime.diarizerTask(compute: options.model.compute) }
-                await MainActor.run { TranscriptWindow.shared.show() }
-                return "window shown"
-            case .copy: return try copyNew()
             case .quit:
                 Task.detached {
                     try? await Task.sleep(for: .milliseconds(200))
@@ -86,18 +77,12 @@ public actor DictationService {
             try await MicrophonePermission.require()
             input = .microphone
         }
-        let index = transcript.mutate { $0.beginTake() }
-        let transcript = self.transcript
         take = try DictationTake(
             input: input, engine: engine, diarizer: diarizer, language: options.model.language,
             onPartial: { text in
                 Self.log("partial: \(text)")
                 PartialWindow.update(text)
-            },
-            onTail: { tail in transcript.mutate { $0.setTail(take: index, tail) } },
-            onPieces: { pieces in transcript.mutate { $0.update(take: index, pieces: pieces) } })
-        takeIndex = index
-        await MainActor.run { TranscriptWindow.shared.setRecording(true) }
+            })
         PartialWindow.update("")
         Self.log("recording started")
         Earcon.start.play()
@@ -107,18 +92,8 @@ public actor DictationService {
     private func stop() async throws -> String {
         guard let active = take else { return "not recording" }
         take = nil
-        let index = takeIndex
-        transcript.mutate { $0.setTail(take: index, nil) }
-        await MainActor.run { TranscriptWindow.shared.setRecording(false) }
         defer { PartialWindow.update(nil) }
-        let result: DictationResult
-        do {
-            result = try await active.stop()
-        } catch {
-            transcript.mutate { $0.finish(take: index, pieces: $0.takes[index].pieces) }
-            throw error
-        }
-        transcript.mutate { $0.finish(take: index, pieces: result.pieces) }
+        let result = try await active.stop()
         Self.log(
             String(
                 format: "speech_seconds=%.1f finalize_seconds=%.3f", result.speechSeconds, result.finalizeSeconds))
@@ -181,13 +156,12 @@ public actor DictationService {
                 try await MicrophonePermission.require()
                 input = .microphone
             }
-            let transcript = self.transcript
-            let index = transcript.mutate { $0.beginTake() }
+            // P: whole partial text; T: unfinished segment; L: finished segments labeled so far.
             let take = try DictationTake(
                 input: input, engine: engine, diarizer: diarizer, language: request.language,
                 onPartial: { connection.send("P", JobText(text: $0)) },
-                onTail: { tail in transcript.mutate { $0.setTail(take: index, tail) } },
-                onPieces: { pieces in transcript.mutate { $0.update(take: index, pieces: pieces) } })
+                onTail: { connection.send("T", JobText(text: $0)) },
+                onPieces: { connection.send("L", $0) })
             // Stop when the client sends a byte or disconnects, or when a file input ends.
             let (signal, trigger) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
             Thread.detachNewThread {
@@ -201,16 +175,9 @@ public actor DictationService {
             }
             for await _ in signal { break }
             inputEnd?.cancel()
-            transcript.mutate { $0.setTail(take: index, nil) }
-            let finished: DictationResult
-            do {
-                finished = try await take.stop()
-            } catch {
-                transcript.mutate { $0.finish(take: index, pieces: $0.takes[index].pieces) }
-                throw error
-            }
-            transcript.mutate { $0.finish(take: index, pieces: finished.pieces) }
+            let finished = try await take.stop()
             var result = JobResult()
+            result.pieces = finished.pieces
             result.rendered = finished.document.rendered
             result.speechSeconds = finished.speechSeconds
             result.finalizeSeconds = finished.finalizeSeconds
@@ -218,14 +185,5 @@ public actor DictationService {
         }
     }
 
-    /// Copies the transcript text not copied before to the clipboard and returns it.
-    private func copyNew() throws -> String {
-        let text = transcript.mutate { $0.copyNew() }
-        guard !text.isEmpty else { return "" }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        guard pasteboard.setString(text, forType: .string) else { throw OutputError.clipboardUnavailable }
-        return text
-    }
 
 }

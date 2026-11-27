@@ -26,9 +26,9 @@ mac-stt serve --diarize --no-clipboard   # server options: speaker labels, keep 
 mac-stt status | stop | quit                # quit exits the server; it also exits by itself after 10 min idle
 ```
 
-Transcript window: `mac-stt window` opens a window that shows every take live, one line per speaker, with a Start/Stop button and a "Copy new text" button. Copying (the button, the global key Control-Option-Command-C, or `mac-stt copy`) puts on the clipboard only the text transcribed since the previous copy. `mac-stt serve --copy-key KEY|none` changes the key.
+Live transcript: `mac-stt transcribe` with no files shows the microphone's transcript live in the terminal, one line per speaker. Keys: space pauses and resumes, `c` copies the text since the previous copy, `a` copies the whole transcript, `q` quits and prints the transcript.
 
-One copy of the models: `toggle`, `record`, `transcribe`, and the window all run inside the one background `mac-stt serve`, which starts on demand. A command asking for a different `--model` or `--compute` than the running server fails with a message; `mac-stt quit` first.
+One copy of the models: `toggle`, `record`, and `transcribe` all run inside the one background `mac-stt serve`, which starts on demand. A command asking for a different `--model` or `--compute` than the running server fails with a message; `mac-stt quit` first.
 
 Common options: `--diarize` (speaker labels), `--no-clipboard`, `-o FILE`, `--language en` (default: detect), `--model 1.7b|0.6b`.
 

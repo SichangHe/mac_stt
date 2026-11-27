@@ -54,22 +54,16 @@ public struct RecordOptions: Equatable, Sendable {
 public struct ServeOptions: Equatable, Sendable {
     public let model: ModelOptions
     public let output: OutputOptions
-    /// Global key that copies the transcript text not copied before; nil = none.
-    public var copyKey: Hotkey?
 
-    public init(model: ModelOptions, output: OutputOptions, copyKey: Hotkey? = try? Hotkey(Hotkey.defaultCopySpec)) {
+    public init(model: ModelOptions, output: OutputOptions) {
         self.model = model
         self.output = output
-        self.copyKey = copyKey
     }
 }
 
 public enum ControlVerb: String, CaseIterable, Sendable {
     case toggle, start, stop, status, quit
-    /// Open the transcript window (`mac-stt window`).
-    case show
-    /// Copy the transcript text not copied before (`mac-stt copy`).
-    case copy
+
 }
 
 public enum Command: Equatable, Sendable {
@@ -80,6 +74,7 @@ public enum Command: Equatable, Sendable {
     case control(ControlVerb)
     case transcribe(TranscribeOptions)
     case record(RecordOptions)
+    case live(ModelOptions)
     case profileModels(paths: [String], compute: ComputePolicy)
 }
 
@@ -119,30 +114,20 @@ public enum CLIParser {
             guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
             return .setup(parsed.model)
         case "serve":
-            var rest = rest
-            var copyKey = try? Hotkey(Hotkey.defaultCopySpec)
-            if let at = rest.firstIndex(of: "--copy-key") {
-                guard at + 1 < rest.count else { throw CLIError.missingValue("--copy-key") }
-                let value = rest[at + 1]
-                do {
-                    copyKey = value == "none" ? nil : try Hotkey(value)
-                } catch {
-                    throw CLIError.invalidValue("--copy-key", value)
-                }
-                rest.removeSubrange(at...(at + 1))
-            }
             let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
             guard parsed.paths.isEmpty else { throw CLIError.unknownOption(parsed.paths[0]) }
-            return .serve(ServeOptions(model: parsed.model, output: parsed.output, copyKey: copyKey))
-        case "toggle", "start", "stop", "status", "quit", "copy":
+            return .serve(ServeOptions(model: parsed.model, output: parsed.output))
+        case "toggle", "start", "stop", "status", "quit":
             guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
             return .control(ControlVerb(rawValue: name)!)
-        case "window":
-            guard rest.isEmpty else { throw CLIError.unknownOption(rest[0]) }
-            return .control(.show)
         case "transcribe":
             let parsed = try parseShared(rest, allowsDiarization: true, allowsInput: false)
-            guard !parsed.paths.isEmpty else { throw CLIError.missingInput(name) }
+            // No files: live transcript of the microphone in this terminal, with speakers.
+            if parsed.paths.isEmpty {
+                var model = parsed.model
+                model.diarize = true
+                return .live(model)
+            }
             return .transcribe(
                 TranscribeOptions(
                     paths: parsed.paths,
@@ -245,9 +230,8 @@ usage:
   mac-stt start | stop                  start or stop recording explicitly
   mac-stt status                        report whether `serve` is idle or recording
   mac-stt quit                          exit the background `serve` (it also exits after 10 min idle)
-  mac-stt window                        open the live transcript window (per speaker), starting `serve`
-  mac-stt copy                          copy the transcript text not copied before (also a window button)
-  mac-stt serve --copy-key KEY|none     global key for `copy`, default ctrl+opt+cmd+c
+  mac-stt transcribe                    live transcript per speaker in this terminal:
+                                        space pauses, c copies text since the last copy, a copies all, q quits
   mac-stt record [--input FILE] [--diarize]    one take in this terminal; Control-C finishes
   mac-stt transcribe FILE... [--diarize]
   mac-stt profile-model MODEL.mlmodelc... [--compute ane|gpu|cpu|all]

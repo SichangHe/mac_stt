@@ -56,11 +56,6 @@ final class PartialWindow {
         guard !disabled else { return }
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                // The transcript window already shows the live text.
-                if TranscriptWindow.shared.isVisible {
-                    shared.hide()
-                    return
-                }
                 if let text {
                     // A late partial from a finished take must not reopen the window.
                     if text.isEmpty { shared.active = true }

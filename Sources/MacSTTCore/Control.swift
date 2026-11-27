@@ -50,13 +50,12 @@ public enum ControlClient {
     /// Sends one verb to the running server, starting it in the background for `toggle`/`start`.
     public static func send(_ verb: ControlVerb) async throws -> String {
         var fd = ControlSocket.connectClient()
-        if fd == nil, verb == .toggle || verb == .start || verb == .show {
+        if fd == nil, verb == .toggle || verb == .start {
             fd = try await launchAndConnect()
         }
         guard let fd else {
             if verb == .status { return "not running" }
             if verb == .quit { return "not running" }
-            if verb == .copy { return "not running; nothing to copy" }
             throw ControlError.notReachable
         }
         defer { close(fd) }

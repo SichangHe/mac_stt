@@ -38,16 +38,18 @@ final class TranscriptLogTests: XCTestCase {
         XCTAssertEqual(log.copyNew(), "a two")
     }
 
-    func testCopyKeyParsing() throws {
-        guard case .serve(let defaults) = try CLIParser.parse(["serve"]) else { return XCTFail("wrong command") }
-        XCTAssertEqual(defaults.copyKey?.spec, "ctrl+opt+cmd+c")
-        guard case .serve(let none) = try CLIParser.parse(["serve", "--copy-key", "none", "--diarize"]) else {
-            return XCTFail("wrong command")
-        }
-        XCTAssertNil(none.copyKey)
-        XCTAssertTrue(none.model.diarize)
-        XCTAssertEqual(try CLIParser.parse(["window"]), .control(.show))
-        XCTAssertEqual(try CLIParser.parse(["copy"]), .control(.copy))
-        XCTAssertThrowsError(try CLIParser.parse(["serve", "--copy-key", "c"]))
+    func testCopyAllReturnsEverythingAndMarksItCopied() {
+        var log = TranscriptLog()
+        let take = log.beginTake()
+        log.update(take: take, pieces: [piece("1", 0, 8, "hello")])
+        XCTAssertEqual(log.copyNew(), "Speaker 1: hello")
+        log.update(take: take, pieces: [piece("1", 0, 8, "hello"), piece("2", 8, 9, "hi")])
+        XCTAssertEqual(log.copyAll(), "Speaker 1: hello\nSpeaker 2: hi")
+        XCTAssertEqual(log.copyNew(), "")
+    }
+
+    func testTranscribeWithoutFilesIsLiveWithSpeakers() throws {
+        guard case .live(let model) = try CLIParser.parse(["transcribe"]) else { return XCTFail("wrong command") }
+        XCTAssertTrue(model.diarize)
     }
 }

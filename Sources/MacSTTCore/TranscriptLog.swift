@@ -61,6 +61,12 @@ public struct TranscriptLog: Equatable, Sendable {
         return blocks.joined(separator: "\n\n")
     }
 
+    /// Returns all transcribed text and marks it copied.
+    public mutating func copyAll() -> String {
+        _ = copyNew()
+        return takes.map { Self.render($0.pieces) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
+
     /// Consecutive pieces of one speaker become one line `Speaker: text`; with no speakers, plain text.
     public static func render(_ pieces: [TranscriptLine]) -> String {
         var lines: [(String, String)] = []

@@ -15,7 +15,7 @@ public struct SpeakerSpan: Equatable, Sendable {
     }
 }
 
-public struct TranscriptLine: Equatable, Sendable {
+public struct TranscriptLine: Equatable, Sendable, Codable {
     public let speaker: String
     public let startSeconds: Double
     public let endSeconds: Double

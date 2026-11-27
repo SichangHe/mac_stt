@@ -33,6 +33,8 @@ public struct JobFile: Codable, Sendable {
 public struct JobResult: Codable, Sendable {
     public var files: [JobFile] = []
     public var rendered = ""
+    /// `record`: final labeled pieces, one per segment or speaker turn.
+    public var pieces: [TranscriptLine] = []
     public var speechSeconds = 0.0
     public var finalizeSeconds = 0.0
 }
@@ -64,7 +66,9 @@ public enum JobClient {
     /// `stop` is awaited for `record`; when it returns, the server is told to finish the take.
     public static func run(
         _ request: JobRequest, stop: (@Sendable () async -> Void)? = nil,
-        onPartial: @escaping @Sendable (String) -> Void
+        onPartial: @escaping @Sendable (String) -> Void,
+        onTail: (@Sendable (String) -> Void)? = nil,
+        onPieces: (@Sendable ([TranscriptLine]) -> Void)? = nil
     ) async throws -> JobResult {
         var fd = ControlSocket.connectClient()
         if fd == nil {
@@ -96,6 +100,9 @@ public enum JobClient {
                 let body = Data(message.dropFirst(2))
                 switch message[0] {
                 case UInt8(ascii: "P"): onPartial((try? JSONDecoder().decode(JobText.self, from: body))?.text ?? "")
+                case UInt8(ascii: "T"): onTail?((try? JSONDecoder().decode(JobText.self, from: body))?.text ?? "")
+                case UInt8(ascii: "L"):
+                    if let pieces = try? JSONDecoder().decode([TranscriptLine].self, from: body) { onPieces?(pieces) }
                 case UInt8(ascii: "D"): return try JSONDecoder().decode(JobResult.self, from: body)
                 case UInt8(ascii: "E"):
                     throw ControlError.serverFailed((try? JSONDecoder().decode(JobText.self, from: body))?.text ?? "failed")
