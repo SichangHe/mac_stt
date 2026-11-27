@@ -2,8 +2,8 @@
 # Short feature checks on Apple Silicon macOS using a released or built binary.
 # usage: scripts/e2e-features OUT_DIR [BINARY]
 set -eu
-out=$1
-mkdir -p "$out"
+mkdir -p "$1"
+out=$(cd "$1" && pwd)  # absolute: the background server resolves MAC_STT_FAKE_MIC from its own working directory
 bin=${2:-dist/mac-stt}
 speech=tests/data/librispeech-dev-clean-240s
 export MAC_STT_TRACE=1
